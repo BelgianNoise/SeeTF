@@ -1,0 +1,2 @@
+[  222206ms] [ERROR] Access to fetch at 'http://127.0.0.1:8000/save' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource. @ http://localhost:3000/portfolio/overview:0
+[  222207ms] [ERROR] Failed to load resource: net::ERR_FAILED @ http://127.0.0.1:8000/save:0

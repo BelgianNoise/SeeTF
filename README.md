@@ -39,9 +39,13 @@ No sign-up. No credit card. No catch. **100% free, forever.**
 |:---:|:---:|
 | ![Portfolio Overview](public/screenshots/portfolio-overview.png) | ![Portfolio Allocation](public/screenshots/portfolio-allocation.png) |
 
-| ETF Detail Page | ETF Breakdown |
+| ETF Detail Page | Total Expense Ratio |
 |:---:|:---:|
-| ![ETF Detail](public/screenshots/etf-detail-page.png) | ![ETF Breakdown](public/screenshots/etf-breakdown.png) |
+| ![ETF Detail](public/screenshots/etf-detail-page.png) | ![Total Expense Ratio](public/screenshots/ter-section.png) |
+
+| ETF Holding Overlap |
+|:---:|
+| ![ETF Holding Overlap](public/screenshots/etf-overlap.png) |
 
 </div>
 

@@ -398,6 +398,7 @@ function KeyFigures({
         }
       />
       <StatCard label="TER" value={data.ter} />
+      <StatCard label="Asset Class" value={data.assetClass ?? ""} />
       <IsinStatCard isin={isin} />
     </div>
   );
@@ -595,16 +596,6 @@ export default function EtfDetailPage() {
       {/* ─── Content ─── */}
       <section className="pb-24 pt-8">
         <div className="mx-auto max-w-5xl px-6">
-          {/* Asset Class */}
-          {data.assetClass && (
-            <div className="mb-4 overflow-hidden rounded-2xl border border-white/5 bg-gray-900/60 px-5 py-4 backdrop-blur-sm">
-              <p className="text-xs font-medium text-gray-500">Asset Class</p>
-              <span className="mt-1 inline-block rounded-full bg-emerald-500/10 px-3 py-1 text-sm font-semibold text-emerald-400">
-                {data.assetClass}
-              </span>
-            </div>
-          )}
-
           {/* Key figures */}
           <div className="mb-8">
             <KeyFigures data={data} isin={isin} />
