@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import * as cheerio from "cheerio";
 import { execFile } from "child_process";
+import { existsSync } from "fs";
 import { join } from "path";
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
 
@@ -609,6 +610,24 @@ const CBONDS_CACHE_MAX_SIZE = 200;
 const cbondsHoldingsCache = new Map<string, CacheEntry<CbondsResult>>();
 
 /**
+ * Resolve the Python executable, preferring the project .venv if available.
+ * Falls back to system python3 / python.
+ */
+function resolvePythonExe(): string {
+  const cwd = process.cwd();
+  // Windows venv
+  const winVenv = join(cwd, ".venv", "Scripts", "python.exe");
+  if (existsSync(winVenv)) return winVenv;
+  // Unix venv
+  const unixVenv = join(cwd, ".venv", "bin", "python3");
+  if (existsSync(unixVenv)) return unixVenv;
+  const unixVenv2 = join(cwd, ".venv", "bin", "python");
+  if (existsSync(unixVenv2)) return unixVenv2;
+  // System fallback
+  return process.platform === "win32" ? "python" : "python3";
+}
+
+/**
  * Fetch extended ETF holdings (~100 items) from cbonds.com.
  * Uses a Python helper script (scripts/cbonds_fetch.py) with curl_cffi
  * to bypass Cloudflare TLS fingerprint checks.
@@ -626,9 +645,10 @@ async function fetchCbondsHoldings(isin: string): Promise<CbondsResult> {
 
   try {
     const scriptPath = join(process.cwd(), "scripts", "cbonds_fetch.py");
+    const pythonExe = resolvePythonExe();
     const result = await new Promise<CbondsResult>((resolve) => {
       execFile(
-        "python3",
+        pythonExe,
         [scriptPath, isin],
         { timeout: 45_000, maxBuffer: 5 * 1024 * 1024 },
         (err, stdout, _stderr) => {
