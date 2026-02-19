@@ -35,13 +35,13 @@ No sign-up. No credit card. No catch. **100% free, forever.**
 
 <div align="center">
 
-| Landing Page | Features |
+| Portfolio Overview | Portfolio Allocation |
 |:---:|:---:|
-| ![Landing Page](public/screenshots/landing-page.png) | ![Features](public/screenshots/features.png) |
+| ![Portfolio Overview](public/screenshots/portfolio-overview.png) | ![Portfolio Allocation](public/screenshots/portfolio-allocation.png) |
 
-| Dashboard Preview | ETF Detail Preview |
+| ETF Detail Page | ETF Breakdown |
 |:---:|:---:|
-| ![Dashboard](public/screenshots/dashboard-preview.png) | ![ETF Detail](public/screenshots/etf-detail-preview.png) |
+| ![ETF Detail](public/screenshots/etf-detail-page.png) | ![ETF Breakdown](public/screenshots/etf-breakdown.png) |
 
 </div>
 
