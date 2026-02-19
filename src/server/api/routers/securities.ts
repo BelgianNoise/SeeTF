@@ -1,9 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import * as cheerio from "cheerio";
-import { execFile } from "child_process";
-import { existsSync } from "fs";
-import { join } from "path";
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
 
 /* ─── Types (raw data only — no display formatting) ─── */
@@ -610,27 +607,9 @@ const CBONDS_CACHE_MAX_SIZE = 200;
 const cbondsHoldingsCache = new Map<string, CacheEntry<CbondsResult>>();
 
 /**
- * Resolve the Python executable, preferring the project .venv if available.
- * Falls back to system python3 / python.
- */
-function resolvePythonExe(): string {
-  const cwd = process.cwd();
-  // Windows venv
-  const winVenv = join(cwd, ".venv", "Scripts", "python.exe");
-  if (existsSync(winVenv)) return winVenv;
-  // Unix venv
-  const unixVenv = join(cwd, ".venv", "bin", "python3");
-  if (existsSync(unixVenv)) return unixVenv;
-  const unixVenv2 = join(cwd, ".venv", "bin", "python");
-  if (existsSync(unixVenv2)) return unixVenv2;
-  // System fallback
-  return process.platform === "win32" ? "python" : "python3";
-}
-
-/**
  * Fetch extended ETF holdings (~100 items) from cbonds.com.
- * Uses a Python helper script (scripts/cbonds_fetch.py) with curl_cffi
- * to bypass Cloudflare TLS fingerprint checks.
+ * Uses got-scraping to impersonate Chrome's TLS fingerprint and
+ * bypass Cloudflare protection. Pure TypeScript — no Python dependency.
  * Returns empty result on failure — never throws.
  */
 async function fetchCbondsHoldings(isin: string): Promise<CbondsResult> {
@@ -644,51 +623,90 @@ async function fetchCbondsHoldings(isin: string): Promise<CbondsResult> {
   }
 
   try {
-    const scriptPath = join(process.cwd(), "scripts", "cbonds_fetch.py");
-    const pythonExe = resolvePythonExe();
-    const result = await new Promise<CbondsResult>((resolve) => {
-      execFile(
-        pythonExe,
-        [scriptPath, isin],
-        { timeout: 45_000, maxBuffer: 5 * 1024 * 1024 },
-        (err, stdout, _stderr) => {
-          if (err) {
-            console.error("[cbonds] script error:", err.message);
-            resolve(empty);
-            return;
-          }
-          try {
-            const parsed = JSON.parse(stdout.trim()) as {
-              holdings?: Array<{ name: string; weight: number }>;
-              cbondsId?: string;
-              error?: string;
-            };
-            if (parsed.error) {
-              console.warn("[cbonds] API warning:", parsed.error);
-            }
-            resolve({
-              holdings: (parsed.holdings ?? []).map((h) => ({
-                name: toTitleCase(h.name),
-                weight: h.weight,
-              })),
-              cbondsId: parsed.cbondsId ?? "",
-            });
-          } catch (parseErr) {
-            console.error("[cbonds] JSON parse error:", parseErr);
-            resolve(empty);
-          }
-        },
-      );
+    // Dynamic import (impit is ESM-only with native bindings)
+    const { Impit } = await import("impit");
+    const impit = new Impit({ browser: "chrome" });
+
+    // Step 1: Resolve ISIN → cbonds numeric ETF ID via suggest API
+    const suggestUrl = `https://cbonds.com/api/etf/exchange_traded_funds/suggest/${encodeURIComponent(key)}/`;
+    const suggestResp = await impit.fetch(suggestUrl, {
+      headers: { "Accept": "application/json" },
+      signal: AbortSignal.timeout(15_000),
     });
 
-    // Cache the result (even if empty, to avoid repeated failures)
+    if (!suggestResp.ok) {
+      console.warn(`[cbonds] suggest API returned status ${suggestResp.status}`);
+      return empty;
+    }
+
+    const suggestData = (await suggestResp.json()) as {
+      response?: { items?: Array<{ id: string }> };
+    };
+    const items = suggestData?.response?.items ?? [];
+    if (items.length === 0) {
+      console.warn(`[cbonds] no ETF found for ISIN ${key}`);
+      return empty;
+    }
+    const cbondsId = String(items[0]!.id);
+
+    // Step 2: Fetch the ETF detail page
+    const pageResp = await impit.fetch(`https://cbonds.com/etf/${cbondsId}/`, {
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!pageResp.ok) {
+      console.warn(`[cbonds] ETF page returned status ${pageResp.status}`);
+      return empty;
+    }
+
+    const html = await pageResp.text();
+
+    // Step 3: Extract the embedded `structure` JSON variable from the page
+    const structureMatch = /(?:var\s+)?structure\s*[:=]\s*(\[[\s\S]*?\])\s*[,;]/.exec(html);
+    if (!structureMatch) {
+      console.warn("[cbonds] could not find structure data in page");
+      return { holdings: [], cbondsId };
+    }
+
+    const structure = JSON.parse(structureMatch[1]!) as Array<Record<string, unknown>>;
+
+    // Step 4: Parse holdings from structure
+    const holdings: WeightedItem[] = [];
+    for (const item of structure) {
+      const rawName = item["asset_name"]; // eslint-disable-line @typescript-eslint/dot-notation
+      const name = typeof rawName === "string" ? rawName.trim() : "";
+      if (!name) continue;
+
+      const weightNumeric = item["weight.numeric"];
+      const weightRounded = item["weight.rounded"];
+
+      let weight = 0;
+      if (weightNumeric != null) {
+        const parsed = Number(weightNumeric);
+        weight = isNaN(parsed) ? 0 : Math.round(parsed * 100 * 100) / 100; // convert decimal → percentage
+      } else if (weightRounded != null) {
+        const parsed = Number(weightRounded);
+        weight = isNaN(parsed) ? 0 : parsed;
+      }
+
+      holdings.push({ name: toTitleCase(name), weight });
+    }
+
+    // Sort by weight descending
+    holdings.sort((a, b) => b.weight - a.weight);
+
+    const result: CbondsResult = { holdings, cbondsId };
+
+    // Cache successful results for 24h; cache empty holdings only briefly (5 min)
+    // so transient failures don't block retries for a full day
+    const ttl = holdings.length > 0 ? CBONDS_CACHE_TTL_MS : 5 * 60 * 1000;
     if (cbondsHoldingsCache.size >= CBONDS_CACHE_MAX_SIZE) {
       const firstKey = cbondsHoldingsCache.keys().next().value;
       if (firstKey !== undefined) cbondsHoldingsCache.delete(firstKey);
     }
     cbondsHoldingsCache.set(key, {
       data: result,
-      expiresAt: Date.now() + CBONDS_CACHE_TTL_MS,
+      expiresAt: Date.now() + ttl,
     });
 
     return result;

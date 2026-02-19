@@ -625,12 +625,20 @@ export default function EtfDetailPage() {
           <div className="grid gap-8">
             {/* Holdings */}
             {holdingsItems.length > 0 && (
-              <HoldingsGridSection
-                title={holdingsTitle}
-                items={holdingsItems}
-                showRemainder
-                maxPieSlices={15}
-              />
+              <div>
+                <HoldingsGridSection
+                  title={holdingsTitle}
+                  items={holdingsItems}
+                  showRemainder
+                  maxPieSlices={15}
+                />
+                {holdingsSource === "justetf" && data.hasHoldingsSection && (
+                  <p className="mt-2 text-xs text-gray-500 flex items-center gap-1.5 px-1">
+                    <AlertCircleIcon className="h-3.5 w-3.5 shrink-0 text-gray-600" />
+                    Extended holdings data (cbonds) could not be loaded. Showing top holdings from JustETF.
+                  </p>
+                )}
+              </div>
             )}
 
             {/* Countries & Sectors side by side on larger screens */}
