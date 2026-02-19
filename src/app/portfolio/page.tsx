@@ -249,21 +249,22 @@ function PortfolioPageInner() {
     <main className="min-h-screen bg-gray-950 font-sans text-gray-100 overflow-x-hidden">
       {/* ─── Compact Header ─── */}
       <section className="border-b border-white/5 bg-gray-900/40">
-<div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-4">
-            <Link href="/" className="text-xl font-bold tracking-tight text-white">
-              See<span className="text-emerald-400">TF</span>
-            </Link>
-            <div className="h-5 w-px bg-white/10" />
-            <h1 className="text-lg font-bold text-white sm:text-xl">
-              Build Your Portfolio
-            </h1>
-            <span className="hidden text-sm text-gray-500 sm:inline">
-              {positions.length} position{positions.length !== 1 ? "s" : ""}
-            </span>
-          </div>
+<div className="mx-auto max-w-6xl px-4 py-4 sm:px-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <Link href="/" className="text-xl font-bold tracking-tight text-white">
+                See<span className="text-emerald-400">TF</span>
+              </Link>
+              <div className="h-5 w-px bg-white/10" />
+              <h1 className="text-base font-bold text-white sm:text-xl">
+                Build Your Portfolio
+              </h1>
+              <span className="hidden text-sm text-gray-500 sm:inline">
+                {positions.length} position{positions.length !== 1 ? "s" : ""}
+              </span>
+            </div>
 
-          <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             {/* ── Input Mode Toggle ── */}
             <div className="inline-flex overflow-hidden rounded-lg border border-white/10 bg-gray-900">
               <button
@@ -326,8 +327,9 @@ function PortfolioPageInner() {
               className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-400 transition hover:border-red-500/40 hover:bg-red-500/20 hover:text-red-300"
             >
               <Trash2Icon className="h-3.5 w-3.5" />
-              Clear
+              <span className="hidden sm:inline">Clear</span>
             </button>
+          </div>
           </div>
         </div>
       </section>
@@ -336,7 +338,7 @@ function PortfolioPageInner() {
       <section className="pb-24 pt-6">
         <form
           onSubmit={handleSubmit}
-          className="mx-auto max-w-6xl px-6"
+          className="mx-auto max-w-6xl px-4 sm:px-6"
         >
 
           {/* ── Total Portfolio Value (optional, percentage mode only) ── */}
@@ -403,18 +405,30 @@ function PortfolioPageInner() {
               return (
               <div
                 key={pos.id}
-                className={`group flex flex-row items-center gap-4 rounded-2xl border ${
+                className={`group flex flex-col gap-3 rounded-2xl border sm:flex-row sm:items-center sm:gap-4 ${
                   showErrors && errs
                     ? "border-red-500/30 bg-gray-900/80"
                     : "border-white/5 bg-gray-900"
                 } p-4 transition hover:border-emerald-500/20`}
               >
-                {/* Row number */}
-                <div className="flex shrink-0 flex-col gap-1.5">
-                  <span className="hidden text-xs font-medium sm:block">&nbsp;</span>
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/5 text-sm font-bold text-gray-400">
-                    {idx + 1}
+                {/* Row number & delete (mobile: inline header) */}
+                <div className="flex items-center justify-between sm:contents">
+                  <div className="flex shrink-0 flex-col gap-1.5">
+                    <span className="hidden text-xs font-medium sm:block">&nbsp;</span>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/5 text-sm font-bold text-gray-400">
+                      {idx + 1}
+                    </div>
                   </div>
+                  {/* Mobile-only delete button */}
+                  <button
+                    type="button"
+                    onClick={() => removePosition(pos.id)}
+                    disabled={positions.length === 1}
+                    className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-gray-500 transition hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-30 sm:hidden"
+                    title="Remove position"
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
                 </div>
 
                 {/* Security autocomplete */}
@@ -443,7 +457,7 @@ function PortfolioPageInner() {
                 </div>
 
                 {/* Value input */}
-                <div className="flex w-44 flex-col gap-1.5">
+                <div className="flex w-full flex-col gap-1.5 sm:w-44">
                   <label className="text-xs font-medium uppercase tracking-wider text-gray-500">
                     {inputMode === "amount"
                       ? `Amount (${currency})`
@@ -475,8 +489,8 @@ function PortfolioPageInner() {
                   )}
                 </div>
 
-                {/* Remove button */}
-                <div className="flex shrink-0 flex-col gap-1.5">
+                {/* Remove button (desktop only - mobile version is in the header) */}
+                <div className="hidden shrink-0 flex-col gap-1.5 sm:flex">
                   <span className="hidden text-xs font-medium sm:block">&nbsp;</span>
                   <button
                     type="button"
