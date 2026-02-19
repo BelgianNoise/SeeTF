@@ -11,8 +11,6 @@ import {
   PieChartIcon,
   LayersIcon,
   ExternalLinkIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
   MoreHorizontalIcon,
   TrendingUpIcon,
   TrendingDownIcon,
@@ -113,239 +111,13 @@ function PieTooltipContent({
   );
 }
 
-/* ─── Pie chart component ─── */
-function SectionPieChart({
-  items,
-  color,
-  maxSlices,
-}: {
-  items: { name: string; weight: number }[];
-  color: "emerald" | "sky" | "violet";
-  maxSlices?: number;
-}) {
-  const grouped = groupSmallEntries(items, maxSlices);
-  const palette = PIE_PALETTES[color];
 
-  return (
-    <div className="flex items-center justify-center py-4">
-      <ResponsiveContainer width="100%" height={280}>
-        <PieChart>
-          <Pie
-            data={grouped}
-            dataKey="weight"
-            nameKey="name"
-            cx="50%"
-            cy="50%"
-            innerRadius={55}
-            outerRadius={100}
-            paddingAngle={2}
-            strokeWidth={0}
-          >
-            {grouped.map((entry, idx) => (
-              <Cell
-                key={`${entry.name}-${idx}`}
-                fill={
-                  entry.name === "Other"
-                    ? OTHERS_COLOR
-                    : palette[idx % palette.length]
-                }
-              />
-            ))}
-          </Pie>
-          <Tooltip content={<PieTooltipContent />} />
-        </PieChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-/* ─── Weighted item row with progress bar ─── */
-function WeightedRow({
-  name,
-  weight,
-  color,
-  maxWeight,
-}: {
-  name: string;
-  weight: number;
-  color: "emerald" | "sky" | "violet";
-  maxWeight: number;
-}) {
-  const barWidth = maxWeight > 0 ? (weight / maxWeight) * 100 : 0;
-
-  const colorClasses = {
-    emerald: {
-      text: "text-emerald-400",
-      bar: "bg-emerald-500/50",
-    },
-    sky: {
-      text: "text-sky-400",
-      bar: "bg-sky-500/50",
-    },
-    violet: {
-      text: "text-violet-400",
-      bar: "bg-violet-500/50",
-    },
-  };
-
-  const c = colorClasses[color];
-
-  return (
-    <tr className="transition-colors hover:bg-white/[0.03]">
-      <td className="max-w-0 truncate py-2.5 pl-4 pr-3">
-        <span className="text-sm text-gray-300">{name}</span>
-      </td>
-      <td className="w-20 whitespace-nowrap px-3 py-2.5 text-right">
-        <span className={`text-sm font-semibold tabular-nums ${c.text}`}>
-          {weight.toFixed(2)}%
-        </span>
-      </td>
-      <td className="hidden w-40 py-2.5 pl-3 pr-4 sm:table-cell">
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/5">
-          <div
-            className={`h-full rounded-full ${c.bar} transition-all duration-300`}
-            style={{ width: `${Math.min(barWidth, 100)}%` }}
-          />
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-/* ─── Section component ─── */
-function DataSection({
-  title,
-  icon,
-  items,
-  color,
-  emptyText,
-  showRemainder = false,
-  collapsible = false,
-  defaultVisibleCount = 10,
-  maxPieSlices,
-}: {
-  title: string;
-  icon: React.ReactNode;
-  items: { name: string; weight: number }[];
-  color: "emerald" | "sky" | "violet";
-  emptyText: string;
-  showRemainder?: boolean;
-  collapsible?: boolean;
-  defaultVisibleCount?: number;
-  maxPieSlices?: number;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const maxWeight = items.length > 0 ? Math.max(...items.map((i) => i.weight)) : 0;
-  const totalWeight = items.reduce((sum, i) => sum + i.weight, 0);
-  const remainderWeight = 100 - totalWeight;
-  const hasRemainder = showRemainder && remainderWeight > 0.01;
-
-  const canCollapse = collapsible && items.length > defaultVisibleCount;
-  const visibleItems = canCollapse && !expanded ? items.slice(0, defaultVisibleCount) : items;
-  const showOtherRow = hasRemainder && (!canCollapse || expanded);
-
-  return (
-    <div className="overflow-hidden rounded-2xl border border-white/5 bg-gray-900/60 backdrop-blur-sm">
-      <div className="flex items-center gap-3 border-b border-white/5 px-5 py-4">
-        {icon}
-        <h2 className="text-base font-bold text-white">{title}</h2>
-        <span className="ml-auto rounded-full bg-white/5 px-2.5 py-0.5 text-xs font-medium text-gray-400">
-          {items.length} {items.length === 1 ? "item" : "items"}
-        </span>
-      </div>
-
-      {/* Pie chart — always reflects all items */}
-      {items.length > 0 && (
-        <div className="border-b border-white/5">
-          <SectionPieChart items={items} color={color} maxSlices={maxPieSlices} />
-        </div>
-      )}
-
-      {items.length > 0 ? (
-        <div className="overflow-hidden">
-          <table className="w-full table-fixed text-left">
-            <thead>
-              <tr className="border-b border-white/5 bg-gray-900/80">
-                <th className="max-w-0 py-2.5 pl-4 pr-3 text-xs font-semibold uppercase tracking-wider text-gray-500">
-                  Name
-                </th>
-                <th className="w-20 whitespace-nowrap px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
-                  Weight
-                </th>
-                <th className="hidden w-40 py-2.5 pl-3 pr-4 text-xs font-semibold uppercase tracking-wider text-gray-500 sm:table-cell">
-                  &nbsp;
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/[0.03]">
-              {visibleItems.map((item, i) => (
-                <WeightedRow
-                  key={i}
-                  name={item.name}
-                  weight={item.weight}
-                  color={color}
-                  maxWeight={maxWeight}
-                />
-              ))}
-              {showOtherRow && (
-                <tr className="bg-white/[0.02]">
-                  <td className="max-w-0 truncate py-2.5 pl-4 pr-3">
-                    <span className="text-sm italic text-gray-500">Other</span>
-                  </td>
-                  <td className="w-20 whitespace-nowrap px-3 py-2.5 text-right">
-                    <span className="text-sm font-semibold tabular-nums italic text-gray-500">
-                      {remainderWeight.toFixed(2)}%
-                    </span>
-                  </td>
-                  <td className="hidden w-40 py-2.5 pl-3 pr-4 sm:table-cell">
-                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/5">
-                      <div
-                        className="h-full rounded-full bg-gray-600/50 transition-all duration-300"
-                        style={{ width: `${Math.min((remainderWeight / maxWeight) * 100, 100)}%` }}
-                      />
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-
-          {/* Show more / Show less toggle */}
-          {canCollapse && (
-            <div className="border-t border-white/5 px-5 py-3">
-              <button
-                onClick={() => setExpanded((prev) => !prev)}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-white/[0.04] px-4 py-2 text-sm font-medium text-gray-300 transition-colors hover:bg-white/[0.08] hover:text-white"
-              >
-                {expanded ? (
-                  <>
-                    <ChevronUpIcon className="h-4 w-4" />
-                    Show less
-                  </>
-                ) : (
-                  <>
-                    <ChevronDownIcon className="h-4 w-4" />
-                    Show more ({items.length - defaultVisibleCount} remaining)
-                  </>
-                )}
-              </button>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="px-5 py-8 text-center text-sm text-gray-500">
-          {emptyText}
-        </div>
-      )}
-    </div>
-  );
-}
 
 /* ─── Holdings grid section (matches portfolio overview style) ─── */
 function HoldingsGridSection({
   title,
   items,
-  showRemainder = false,
+  showRemainder: _showRemainder = false,
   maxPieSlices,
 }: {
   title: string;
@@ -608,7 +380,7 @@ function KeyFigures({
   isin: string;
 }) {
   const hasReturns = data.returns.oneYear || data.returns.threeYears || data.returns.fiveYears;
-  const hasBasics = data.fundSize || data.ter || data.totalHoldings || data.assetClass || isin;
+  const hasBasics = data.fundSize ?? data.ter ?? data.totalHoldings ?? isin;
   if (!hasReturns && !hasBasics) return null;
 
   return (
@@ -626,7 +398,6 @@ function KeyFigures({
         }
       />
       <StatCard label="TER" value={data.ter} />
-      <StatCard label="Asset Class" value={data.assetClass ?? ""} />
       <IsinStatCard isin={isin} />
     </div>
   );
@@ -786,7 +557,7 @@ export default function EtfDetailPage() {
     );
   }
 
-  const displayName = data.etfName || `ETF ${isin}`;
+  const displayName = data.etfName ?? `ETF ${isin}`;
   const hasAnyData =
     data.holdings.length > 0 || data.cbondsHoldings.length > 0 || data.countries.length > 0 || data.sectors.length > 0;
 
@@ -824,6 +595,16 @@ export default function EtfDetailPage() {
       {/* ─── Content ─── */}
       <section className="pb-24 pt-8">
         <div className="mx-auto max-w-5xl px-6">
+          {/* Asset Class */}
+          {data.assetClass && (
+            <div className="mb-4 overflow-hidden rounded-2xl border border-white/5 bg-gray-900/60 px-5 py-4 backdrop-blur-sm">
+              <p className="text-xs font-medium text-gray-500">Asset Class</p>
+              <span className="mt-1 inline-block rounded-full bg-emerald-500/10 px-3 py-1 text-sm font-semibold text-emerald-400">
+                {data.assetClass}
+              </span>
+            </div>
+          )}
+
           {/* Key figures */}
           <div className="mb-8">
             <KeyFigures data={data} isin={isin} />

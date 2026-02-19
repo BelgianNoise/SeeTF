@@ -487,7 +487,7 @@ async function fetchExpandedCompositionData(
   let countriesUrl = "";
   let sectorsUrl = "";
   for (const call of ajaxCalls) {
-    const urlMatch = call.match(/"u":"([^"]+)"/);
+    const urlMatch = /"u":"([^"]+)"/.exec(call);
     if (!urlMatch) continue;
     const url = urlMatch[1]!;
     if (url.includes("loadMoreCountries")) countriesUrl = url;
@@ -825,7 +825,7 @@ async function fetchEtfFullComposition(isin: string): Promise<EtfFullComposition
   // ── Total holdings count ──
   const rawTotalHoldings = $('[data-testid="tl_etf-holdings_top-holdings_count"]').text().trim();
   // Raw text is e.g. "out of 3,624" — extract just the number and reformat
-  const totalHoldingsMatch = rawTotalHoldings.match(/([\d,.]+)/);
+  const totalHoldingsMatch = /([\d,.]+)/.exec(rawTotalHoldings);
   const totalHoldings = totalHoldingsMatch ? `${totalHoldingsMatch[1]} holdings` : rawTotalHoldings;
 
   // ── Top 10 Holdings ──

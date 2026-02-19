@@ -11,7 +11,7 @@ export const metadata: Metadata = {
   title: "SeeTF — Stock & ETF Portfolio Tracker",
   description:
     "Enter your stock and ETF positions, then see a detailed, real-time overview of your entire portfolio.",
-  icons: [{ rel: "icon", url: "/favicon.ico" }],
+  icons: [{ rel: "icon", url: "/favicon.svg", type: "image/svg+xml" }],
 };
 
 const geist = Geist({

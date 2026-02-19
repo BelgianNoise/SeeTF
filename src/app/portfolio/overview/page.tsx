@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { Fragment, useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeftIcon,
@@ -103,217 +103,6 @@ function limitWithOthers(
   return [...visible, { name: "Other", weight: othersWeight }];
 }
 
-function EtfCompositionCard({ position }: { position: Position }) {
-  const [expanded, setExpanded] = useState(false);
-  const isin = position.isin;
-  const hasIsin = !!isin && isin.trim().length > 0;
-
-  const { data, isLoading, isError, error } =
-    api.securities.getEtfComposition.useQuery(
-      { isin: isin || "__placeholder__" },
-      { enabled: expanded && hasIsin, staleTime: 24 * 60 * 60 * 1000, retry: 1 },
-    );
-
-  return (
-    <div className="overflow-hidden rounded-2xl border border-white/5 bg-gray-900/60 backdrop-blur-sm">
-      {/* Collapsible header */}
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 px-4 py-3 text-left transition-colors hover:bg-white/[0.03]"
-      >
-        <ChevronRightIcon
-          className={`h-4 w-4 text-gray-500 transition-transform duration-300 ${expanded ? "rotate-90" : ""}`}
-        />
-        <span className="inline-flex items-center rounded-full bg-sky-500/10 px-2.5 py-0.5 text-xs font-semibold text-sky-400">
-          ETF
-        </span>
-        <span className="font-semibold text-white">{position.name || position.ticker}</span>
-        {position.ticker && (
-          <span className="text-xs text-gray-500">{position.ticker}</span>
-        )}
-        {!hasIsin && (
-          <span className="ml-auto text-xs text-amber-400/70">No ISIN</span>
-        )}
-      </button>
-
-      {/* Expanded content — animated with CSS Grid */}
-      <div
-        className={`grid transition-[grid-template-rows,opacity] duration-300 ease-in-out ${
-          expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
-        }`}
-      >
-        <div className="overflow-hidden">
-          <div className={`border-t border-white/5 px-4 pb-4 pt-3 ${expanded ? '' : 'invisible'}`}>
-          {/* No ISIN available */}
-          {!hasIsin && (
-            <div className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3">
-              <AlertCircleIcon className="h-4 w-4 shrink-0 text-amber-400" />
-              <p className="text-sm text-amber-300">
-                No ISIN available for this ETF — composition data cannot be fetched.
-                Yahoo Finance does not provide ISINs. You can add the ISIN manually in the portfolio editor to enable this feature.
-              </p>
-            </div>
-          )}
-
-          {/* Loading state */}
-          {hasIsin && isLoading && (
-            <div className="flex items-center gap-2 py-4 text-sm text-gray-400">
-              <Loader2Icon className="h-4 w-4 animate-spin" />
-              Loading composition…
-            </div>
-          )}
-
-          {/* Error state */}
-          {hasIsin && isError && (
-            <div className="flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3">
-              <AlertCircleIcon className="h-4 w-4 shrink-0 text-red-400" />
-              <p className="text-sm text-red-300">
-                Failed to load ETF composition data.
-                {error?.message ? ` (${error.message})` : " Please try again later."}
-              </p>
-            </div>
-          )}
-
-          {hasIsin && data && !isLoading && (
-            <div className="grid gap-4 md:grid-cols-3">
-              {/* Top Holdings */}
-              {data.holdings.length > 0 && (
-                <div>
-                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Top {Math.min(data.holdings.length, 10)} Holdings
-                  </h4>
-                  <div className="space-y-1">
-                    {limitWithOthers(data.holdings).map((h, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-baseline gap-2">
-                            <span className="min-w-0 flex-1 truncate text-xs text-gray-300">
-                              {h.name}
-                            </span>
-                            <span className="ml-2 shrink-0 text-xs font-semibold tabular-nums text-emerald-400">
-                              {h.weight.toFixed(2)}%
-                            </span>
-                          </div>
-                          <div className="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-white/5">
-                            <div
-                              className="h-full rounded-full bg-emerald-500/40"
-                              style={{ width: `${Math.min(h.weight * 2, 100)}%` }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Countries */}
-              {data.countries.length > 0 && (
-                <div>
-                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Countries
-                  </h4>
-                  <div className="space-y-1">
-                    {limitWithOthers(data.countries, 9).map((c, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-baseline gap-2">
-                            <span className="min-w-0 flex-1 truncate text-xs text-gray-300">
-                              {c.name}
-                            </span>
-                            <span className="ml-2 shrink-0 text-xs font-semibold tabular-nums text-sky-400">
-                              {c.weight.toFixed(2)}%
-                            </span>
-                          </div>
-                          <div className="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-white/5">
-                            <div
-                              className="h-full rounded-full bg-sky-500/40"
-                              style={{ width: `${Math.min(c.weight, 100)}%` }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Sectors */}
-              {data.sectors.length > 0 && (
-                <div>
-                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Sectors
-                  </h4>
-                  <div className="space-y-1">
-                    {limitWithOthers(data.sectors, 9).map((s, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-baseline gap-2">
-                            <span className="min-w-0 flex-1 truncate text-xs text-gray-300">
-                              {s.name}
-                            </span>
-                            <span className="ml-2 shrink-0 text-xs font-semibold tabular-nums text-violet-400">
-                              {s.weight.toFixed(2)}%
-                            </span>
-                          </div>
-                          <div className="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-white/5">
-                            <div
-                              className="h-full rounded-full bg-violet-500/40"
-                              style={{ width: `${Math.min(s.weight, 100)}%` }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Empty state — data fetched but nothing parsed */}
-              {data.holdings.length === 0 &&
-                data.countries.length === 0 &&
-                data.sectors.length === 0 && (
-                  <div className="col-span-3 flex items-center gap-2 rounded-lg border border-sky-500/20 bg-sky-500/5 px-4 py-3">
-                    <AlertCircleIcon className="h-4 w-4 shrink-0 text-sky-400" />
-                    <p className="text-sm text-sky-300">
-                      {!data.hasHoldingsSection ? (
-                        <>
-                          This product{data.assetClass ? ` (${data.assetClass})` : ""} does not have equity holdings data.
-                          Composition breakdowns are only available for equity and multi-asset ETFs.
-                        </>
-                      ) : (
-                        <>
-                          No composition data found for ISIN <span className="font-mono">{isin}</span>.
-                          The ETF may not be listed on JustETF, or the page structure may have changed.
-                        </>
-                      )}
-                    </p>
-                  </div>
-                )}
-
-              {/* View Full Details button */}
-              {(data.holdings.length > 0 ||
-                data.countries.length > 0 ||
-                data.sectors.length > 0) && (
-                <div className="col-span-full mt-2 flex justify-start sm:justify-end">
-                  <Link
-                    href={`/etf/${encodeURIComponent(isin!)}`}
-                    className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-2 text-sm font-medium text-emerald-400 transition hover:border-emerald-500/40 hover:bg-emerald-500/10"
-                  >
-                    View Full Details
-                    <ChevronRightIcon className="h-3.5 w-3.5" />
-                  </Link>
-                </div>
-              )}
-            </div>
-          )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* ═══════════════════════════════════════════════════════════════════════════════
    PIE CHART COLOUR PALETTE
    ═══════════════════════════════════════════════════════════════════════════════ */
@@ -388,7 +177,8 @@ function PortfolioPieTooltipContent({
   payload?: Array<{ name: string; value: number; payload: { fill: string } }>;
 }) {
   if (!active || !payload?.length) return null;
-  const entry = payload[0]!;
+  const entry = payload[0];
+  if (!entry) return null;
   return (
     <div className="rounded-lg border border-white/10 bg-gray-900 px-3 py-2 shadow-xl">
       <div className="flex items-center gap-2">
@@ -402,67 +192,6 @@ function PortfolioPieTooltipContent({
         {entry.value.toFixed(2)}%
       </p>
     </div>
-  );
-}
-
-/* ─── Weighted item row with progress bar (matches ETF detail page) ─── */
-function PortfolioWeightedRow({
-  name,
-  weight,
-  color,
-  maxWeight,
-}: {
-  name: string;
-  weight: number;
-  color: "sky" | "violet" | "emerald";
-  maxWeight: number;
-}) {
-  const barWidth = maxWeight > 0 ? (weight / maxWeight) * 100 : 0;
-
-  const colorClasses = {
-    sky: {
-      text: "text-sky-400",
-      bar: "bg-sky-500/50",
-    },
-    violet: {
-      text: "text-violet-400",
-      bar: "bg-violet-500/50",
-    },
-    emerald: {
-      text: "text-emerald-400",
-      bar: "bg-emerald-500/50",
-    },
-  };
-
-  const c = colorClasses[color];
-
-  return (
-    <tr className="transition-colors hover:bg-white/[0.03]">
-      <td className="max-w-0 truncate py-1 pl-4 pr-2">
-        <span className="text-xs text-gray-300">{name}</span>
-      </td>
-      <td className="w-[4.5rem] whitespace-nowrap px-2 py-1 text-right">
-        <span className={`text-xs font-semibold tabular-nums ${c.text}`}>
-          {weight.toFixed(2)}%
-        </span>
-      </td>
-      <td className="hidden w-32 py-1 pl-2 pr-4 sm:table-cell">
-        <div className="h-1 w-full overflow-hidden rounded-full bg-white/5">
-          <div
-            className={`h-full rounded-full ${c.bar} transition-all duration-300`}
-            style={{ width: `${Math.min(barWidth, 100)}%` }}
-          />
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-/** Hook: fetch composition for one ETF isin. Returns { data, isLoading } */
-function useEtfComposition(isin: string | null) {
-  return api.securities.getEtfComposition.useQuery(
-    { isin: isin ?? "__placeholder__" },
-    { enabled: !!isin && isin.trim().length > 0, staleTime: 24 * 60 * 60 * 1000, retry: 1 },
   );
 }
 
@@ -516,7 +245,7 @@ function EtfDataFetcher({
 function PortfolioDistribution({
   positions,
   inputMode,
-  totalPortfolioValue,
+  totalPortfolioValue: _totalPortfolioValue,
 }: {
   positions: Position[];
   inputMode: "amount" | "percentage";
@@ -639,7 +368,7 @@ function PortfolioDistribution({
       const key = displayName === "Other" ? "Other" : normalizeHoldingName(displayName);
       holdingsWeightMap[key] = (holdingsWeightMap[key] ?? 0) + weightContribution;
       if (holdingsDisplayMap[key]) {
-        holdingsDisplayMap[key] = pickDisplayName(holdingsDisplayMap[key]!, displayName);
+        holdingsDisplayMap[key] = pickDisplayName(holdingsDisplayMap[key] ?? "", displayName);
       } else {
         holdingsDisplayMap[key] = displayName;
       }
@@ -730,10 +459,9 @@ function PortfolioDistribution({
         if (displayName === "Other") continue;
         const key = normalizeHoldingName(displayName);
 
-        if (!holdingEtfMap[key]) {
-          holdingEtfMap[key] = { displayName, etfWeights: [], totalWeight: 0 };
-        }
-        const entry = holdingEtfMap[key]!;
+        holdingEtfMap[key] ??= { displayName, etfWeights: [], totalWeight: 0 };
+        const entry = holdingEtfMap[key];
+        if (!entry) continue;
         entry.displayName = pickDisplayName(entry.displayName, displayName);
         const existing = entry.etfWeights.find(e => e.label === etfLabel);
         if (!existing) {
@@ -1125,8 +853,8 @@ function PortfolioDistribution({
         // Parse TER string to number (e.g., "0.20% p.a." → 0.20)
         const parseTer = (terStr: string | undefined): number => {
           if (!terStr) return 0;
-          const match = terStr.match(/([\d.]+)\s*%/);
-          return match ? parseFloat(match[1]!) : 0;
+          const match = /([\d.]+)\s*%/.exec(terStr);
+          return match ? parseFloat(match[1] ?? "0") : 0;
         };
 
         // Build TER list for ETF positions only (stocks have 0% TER)
@@ -1463,7 +1191,7 @@ function EtfRowExpansion({
                     data.sectors.length > 0) && (
                     <div className="col-span-full mt-2 flex justify-start sm:justify-end">
                       <Link
-                        href={`/etf/${encodeURIComponent(isin!)}`}
+                        href={`/etf/${encodeURIComponent(isin ?? "")}`}
                         className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-2 text-sm font-medium text-emerald-400 transition hover:border-emerald-500/40 hover:bg-emerald-500/10"
                       >
                         View Full Details

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -79,6 +79,14 @@ function validateValue(
    PAGE
    ═══════════════════════════════════════════════════════════════════════════════ */
 export default function PortfolioPage() {
+  return (
+    <Suspense>
+      <PortfolioPageInner />
+    </Suspense>
+  );
+}
+
+function PortfolioPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [inputMode, setInputMode] = useState<InputMode>("amount");
