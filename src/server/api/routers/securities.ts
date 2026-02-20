@@ -384,10 +384,14 @@ interface EtfFullComposition extends EtfComposition {
   etfName: string;
   /** Number of total holdings (e.g. "3,624 holdings") */
   totalHoldings: string;
-  /** Extended holdings from cbonds.com (~100 items) — empty if unavailable */
+  /** Extended holdings from cbonds.com (~100 items) — empty if unavailable (kept for later) */
   cbondsHoldings: WeightedItem[];
-  /** cbonds.com numeric ETF ID (for attribution link) — empty if unavailable */
+  /** cbonds.com numeric ETF ID (for attribution link) — empty if unavailable (kept for later) */
   cbondsId: string;
+  /** ALL holdings from investengine.com — empty if ETF not found on InvestEngine */
+  investEngineHoldings: WeightedItem[];
+  /** Full URL to the ETF page on investengine.com — empty if unavailable */
+  investEngineUrl: string;
   /** Fund size as displayed (e.g. "EUR 110,458") */
   fundSize: string;
   /** TER as displayed (e.g. "0.20% p.a.") */
@@ -401,7 +405,7 @@ interface EtfFullComposition extends EtfComposition {
 }
 
 const ETF_COMP_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const ETF_COMP_CACHE_MAX_SIZE = 200;
+const ETF_COMP_CACHE_MAX_SIZE = 500;
 const etfCompositionCache = new Map<string, CacheEntry<EtfComposition>>();
 const etfFullCompositionCache = new Map<string, CacheEntry<EtfFullComposition>>();
 
@@ -744,6 +748,238 @@ async function fetchCbondsHoldings(isin: string): Promise<CbondsResult> {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════════
+   InvestEngine.com extended holdings
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/** Provider name → URL slug mapping (from investengine.com/etfs/ filter links) */
+const INVEST_ENGINE_PROVIDER_SLUGS: Record<string, string> = {
+  "Vanguard": "vanguard",
+  "Invesco": "invesco",
+  "Amundi": "amundi",
+  "State Street SPDR": "state-street-spdr",
+  "Global X": "global-x",
+  "Xtrackers DWS": "xtrackers",
+  "Blackrock iShares": "blackrock-ishares",
+  "VanEck": "vaneck",
+  "Independent": "independent",
+  "UBS": "ubs",
+  "Legal & General (L&G)": "legal-general-lg",
+  "JP Morgan": "jp-morgan",
+  "HSBC": "hsbc",
+  "WisdomTree": "wisdomtree",
+  "ARK": "ark",
+  "Franklin Templeton": "franklin-templeton",
+  "HANetf": "hanetf",
+  "Pimco": "pimco",
+  "Fidelity": "fidelity",
+  "Goldman Sachs": "goldman-sachs",
+  "Ossiam": "ossiam",
+};
+
+interface InvestEngineSecurityEntry {
+  isin: string;
+  ticker: string;
+  provider_filter_name: string;
+}
+
+const IE_LIST_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days — list barely changes
+let investEngineListCache: CacheEntry<InvestEngineSecurityEntry[]> | null = null;
+let investEngineListInflight: Promise<InvestEngineSecurityEntry[]> | null = null;
+
+/**
+ * Fetch the InvestEngine securities list (835+ ETFs) from their /etfs/ page.
+ * Parses the embedded __NEXT_DATA__ JSON to extract ISIN, ticker, and provider.
+ * Cached for 24 hours.
+ */
+async function fetchInvestEngineSecuritiesList(): Promise<InvestEngineSecurityEntry[]> {
+  if (investEngineListCache && Date.now() < investEngineListCache.expiresAt) {
+    return investEngineListCache.data;
+  }
+
+  // Deduplicate concurrent requests
+  if (investEngineListInflight) return investEngineListInflight;
+  investEngineListInflight = _fetchInvestEngineSecuritiesListInner();
+  try {
+    return await investEngineListInflight;
+  } finally {
+    investEngineListInflight = null;
+  }
+}
+
+async function _fetchInvestEngineSecuritiesListInner(): Promise<InvestEngineSecurityEntry[]> {
+
+  const res = await fetch("https://investengine.com/etfs/", {
+    headers: { "User-Agent": JUSTETF_UA },
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!res.ok) {
+    console.warn(`[investengine] listing page returned status ${res.status}`);
+    return [];
+  }
+
+  const html = await res.text();
+  const $ = cheerio.load(html);
+  const nextDataJson = $("#__NEXT_DATA__").text();
+  if (!nextDataJson) {
+    console.warn("[investengine] could not find __NEXT_DATA__ on listing page");
+    return [];
+  }
+
+  const data = JSON.parse(nextDataJson) as {
+    props?: {
+      pageProps?: {
+        defaultSecurities?: Array<{
+          isin: string;
+          ticker: string;
+          provider_filter_name: string;
+        }>;
+      };
+    };
+  };
+
+  const entries = (data.props?.pageProps?.defaultSecurities ?? []).map(
+    (s): InvestEngineSecurityEntry => ({
+      isin: s.isin,
+      ticker: s.ticker,
+      provider_filter_name: s.provider_filter_name,
+    }),
+  );
+
+  investEngineListCache = {
+    data: entries,
+    expiresAt: Date.now() + IE_LIST_CACHE_TTL_MS,
+  };
+
+  return entries;
+}
+
+interface InvestEngineResult {
+  holdings: WeightedItem[];
+  investEngineUrl: string;
+}
+
+const IE_HOLDINGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const IE_HOLDINGS_EMPTY_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour for empty results
+const IE_HOLDINGS_CACHE_MAX_SIZE = 500;
+const investEngineHoldingsCache = new Map<string, CacheEntry<InvestEngineResult>>();
+const investEngineHoldingsInflight = new Map<string, Promise<InvestEngineResult>>();
+
+/**
+ * Fetch ALL ETF holdings from investengine.com.
+ * Uses the __NEXT_DATA__ JSON embedded in the ETF detail page (SSR, no API calls needed).
+ * Returns holdings sorted by weight descending. Never throws — returns empty on failure.
+ */
+async function fetchInvestEngineHoldings(isin: string): Promise<InvestEngineResult> {
+  const empty: InvestEngineResult = { holdings: [], investEngineUrl: "" };
+
+  const key = isin.toUpperCase();
+  const cached = investEngineHoldingsCache.get(key);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.data;
+  }
+
+  // Deduplicate concurrent requests for the same ISIN
+  const inflight = investEngineHoldingsInflight.get(key);
+  if (inflight) return inflight;
+
+  const promise = _fetchInvestEngineHoldingsInner(key, empty);
+  investEngineHoldingsInflight.set(key, promise);
+  try {
+    return await promise;
+  } finally {
+    investEngineHoldingsInflight.delete(key);
+  }
+}
+
+async function _fetchInvestEngineHoldingsInner(
+  key: string,
+  empty: InvestEngineResult,
+): Promise<InvestEngineResult> {
+  try {
+    // Step 1: Resolve ISIN → investengine URL
+    const securities = await fetchInvestEngineSecuritiesList();
+    const entry = securities.find((s) => s.isin.toUpperCase() === key);
+    if (!entry) {
+      console.warn(`[investengine] ETF not found for ISIN ${key}`);
+      return empty;
+    }
+
+    const providerSlug = INVEST_ENGINE_PROVIDER_SLUGS[entry.provider_filter_name];
+    if (!providerSlug) {
+      console.warn(`[investengine] unknown provider: ${entry.provider_filter_name}`);
+      return empty;
+    }
+
+    const tickerSlug = entry.ticker.toLowerCase();
+    const etfUrl = `https://investengine.com/etfs/${providerSlug}/${tickerSlug}/`;
+
+    // Step 2: Fetch the ETF detail page
+    const res = await fetch(etfUrl, {
+      headers: { "User-Agent": JUSTETF_UA },
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!res.ok) {
+      console.warn(`[investengine] page returned status ${res.status} for ${etfUrl}`);
+      return empty;
+    }
+
+    const html = await res.text();
+
+    // Step 3: Extract __NEXT_DATA__ and parse equities
+    const $ = cheerio.load(html);
+    const nextDataJson = $("#__NEXT_DATA__").text();
+    if (!nextDataJson) {
+      console.warn("[investengine] could not find __NEXT_DATA__ on ETF page");
+      return empty;
+    }
+
+    const pageData = JSON.parse(nextDataJson) as {
+      props?: {
+        pageProps?: {
+          security?: {
+            equities?: Array<{
+              name: string;
+              actual_weight: string;
+            }>;
+          };
+        };
+      };
+    };
+
+    const equities = pageData.props?.pageProps?.security?.equities ?? [];
+
+    // Step 4: Map to WeightedItem[], filter out zero-weight entries
+    const holdings: WeightedItem[] = equities
+      .map((e) => ({
+        name: e.name,
+        weight: Math.round(parseFloat(e.actual_weight) * 100) / 100,
+      }))
+      .filter((h) => h.name && h.weight > 0)
+      .sort((a, b) => b.weight - a.weight);
+
+    const result: InvestEngineResult = { holdings, investEngineUrl: etfUrl };
+
+    // Cache: successful results for 24h, empty results for 1h
+    const ttl = holdings.length > 0 ? IE_HOLDINGS_CACHE_TTL_MS : IE_HOLDINGS_EMPTY_CACHE_TTL_MS;
+    if (investEngineHoldingsCache.size >= IE_HOLDINGS_CACHE_MAX_SIZE) {
+      const firstKey = investEngineHoldingsCache.keys().next().value;
+      if (firstKey !== undefined) investEngineHoldingsCache.delete(firstKey);
+    }
+    investEngineHoldingsCache.set(key, {
+      data: result,
+      expiresAt: Date.now() + ttl,
+    });
+
+    return result;
+  } catch (e) {
+    console.error("[investengine] unexpected error:", e);
+    return empty;
+  }
+}
+
 /** Parse countries from the main profile page HTML (fallback when AJAX is unavailable) */
 function parseCountriesFromPage($: cheerio.CheerioAPI): WeightedItem[] {
   const countries: WeightedItem[] = [];
@@ -910,11 +1146,17 @@ async function fetchEtfFullComposition(isin: string): Promise<EtfFullComposition
   });
 
   // ── Countries & Sectors via Wicket AJAX (expanded data) ──
-  const [{ countries: ajaxCountries, sectors: ajaxSectors }, cbondsResult] =
+  const [{ countries: ajaxCountries, sectors: ajaxSectors }, investEngineResult] =
     await Promise.all([
       fetchExpandedCompositionData(html, cookies, isin),
-      fetchCbondsHoldings(isin),
+      fetchInvestEngineHoldings(isin),
     ]);
+
+  // Fallback: if InvestEngine returned no holdings, try cbonds as backup
+  let cbondsResult: CbondsResult = { holdings: [], cbondsId: "" };
+  if (investEngineResult.holdings.length === 0) {
+    cbondsResult = await fetchCbondsHoldings(isin);
+  }
 
   // Fallback: parse from main page if AJAX didn't return data
   const countries = ajaxCountries.length > 0 ? ajaxCountries : parseCountriesFromPage($);
@@ -930,6 +1172,8 @@ async function fetchEtfFullComposition(isin: string): Promise<EtfFullComposition
     totalHoldings,
     cbondsHoldings: cbondsResult.holdings,
     cbondsId: cbondsResult.cbondsId,
+    investEngineHoldings: investEngineResult.holdings,
+    investEngineUrl: investEngineResult.investEngineUrl,
     fundSize,
     ter,
     replication,

@@ -231,8 +231,10 @@ function EtfDataFetcher({
 
   useEffect(() => {
     if (data) {
-      // Prefer cbondsHoldings (~100 entries) over JustETF top 10 holdings
-      const holdings = data.cbondsHoldings?.length > 0 ? data.cbondsHoldings : data.holdings;
+      // Prefer investEngineHoldings (all) > cbondsHoldings (~100) > JustETF top 10
+      const holdings =
+        data.investEngineHoldings?.length > 0 ? data.investEngineHoldings :
+        data.cbondsHoldings?.length > 0 ? data.cbondsHoldings : data.holdings;
       onData(isin, { countries: data.countries, sectors: data.sectors, holdings, ter: data.ter });
     } else if (!isLoading) {
       onData(isin, null);

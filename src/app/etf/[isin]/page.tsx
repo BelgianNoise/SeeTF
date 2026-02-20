@@ -408,10 +408,12 @@ function KeyFigures({
 function HeaderActions({
   isin,
   cbondsId,
+  investEngineUrl,
   router,
 }: {
   isin: string;
   cbondsId?: string | null;
+  investEngineUrl?: string | null;
   router: ReturnType<typeof useRouter>;
 }) {
   const [open, setOpen] = useState(false);
@@ -472,6 +474,18 @@ function HeaderActions({
                 >
                   <ExternalLinkIcon className="h-4 w-4 shrink-0" />
                   cbonds
+                </a>
+              )}
+              {investEngineUrl && (
+                <a
+                  href={investEngineUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setOpen(false)}
+                  className="flex items-center gap-2.5 border-t border-white/5 px-3.5 py-2.5 text-sm text-gray-300 transition hover:bg-white/[0.06] hover:text-emerald-400"
+                >
+                  <ExternalLinkIcon className="h-4 w-4 shrink-0" />
+                  InvestEngine
                 </a>
               )}
             </div>
@@ -560,15 +574,28 @@ export default function EtfDetailPage() {
 
   const displayName = data.etfName ?? `ETF ${isin}`;
   const hasAnyData =
-    data.holdings.length > 0 || data.cbondsHoldings.length > 0 || data.countries.length > 0 || data.sectors.length > 0;
+    data.holdings.length > 0 || data.investEngineHoldings.length > 0 || data.cbondsHoldings.length > 0 || data.countries.length > 0 || data.sectors.length > 0;
 
-  // Prefer cbonds extended holdings when available, fall back to JustETF top 10
-  const holdingsSource = data.cbondsHoldings.length > 0 ? "cbonds" : "justetf";
-  const holdingsItems = data.cbondsHoldings.length > 0 ? data.cbondsHoldings : data.holdings;
+  // Prefer InvestEngine (all holdings) > cbonds (~100) > JustETF (top 10)
+  const holdingsSource =
+    data.investEngineHoldings.length > 0 ? "investengine" :
+    data.cbondsHoldings.length > 0 ? "cbonds" : "justetf";
+  const holdingsItems =
+    data.investEngineHoldings.length > 0 ? data.investEngineHoldings :
+    data.cbondsHoldings.length > 0 ? data.cbondsHoldings : data.holdings;
   const holdingsTitle =
-    holdingsSource === "cbonds"
-      ? "Holdings"
-      : "Top Holdings";
+    holdingsSource === "justetf"
+      ? "Top Holdings"
+      : "Holdings";
+
+  // Build dynamic source tags: which sources have data
+  const holdingsSources: { label: string; active: boolean }[] = [];
+  if (data.investEngineHoldings.length > 0)
+    holdingsSources.push({ label: "InvestEngine", active: holdingsSource === "investengine" });
+  if (data.cbondsHoldings.length > 0)
+    holdingsSources.push({ label: "cbonds", active: holdingsSource === "cbonds" });
+  if (data.holdings.length > 0)
+    holdingsSources.push({ label: "JustETF", active: holdingsSource === "justetf" });
 
   return (
     <main className="min-h-screen bg-gray-950 font-sans text-gray-100 overflow-x-hidden">
@@ -588,7 +615,7 @@ export default function EtfDetailPage() {
                 {displayName}
               </h1>
             </div>
-            <HeaderActions isin={isin} cbondsId={data.cbondsId} router={router} />
+            <HeaderActions isin={isin} cbondsId={data.cbondsId} investEngineUrl={data.investEngineUrl} router={router} />
           </div>
         </div>
       </section>
@@ -632,11 +659,22 @@ export default function EtfDetailPage() {
                   showRemainder
                   maxPieSlices={15}
                 />
-                {holdingsSource === "justetf" && data.hasHoldingsSection && (
-                  <p className="mt-2 text-xs text-gray-500 flex items-center gap-1.5 px-1">
-                    <AlertCircleIcon className="h-3.5 w-3.5 shrink-0 text-gray-600" />
-                    Extended holdings data (cbonds) could not be loaded. Showing top holdings from JustETF.
-                  </p>
+                {holdingsSources.length > 0 && (
+                  <div className="mt-2 flex items-center gap-1.5 px-1">
+                    <span className="text-xs text-gray-500">Sources:</span>
+                    {holdingsSources.map((src) => (
+                      <span
+                        key={src.label}
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                          src.active
+                            ? "bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30"
+                            : "bg-white/5 text-gray-500"
+                        }`}
+                      >
+                        {src.label}
+                      </span>
+                    ))}
+                  </div>
                 )}
               </div>
             )}
