@@ -627,10 +627,29 @@ async function fetchCbondsHoldings(isin: string): Promise<CbondsResult> {
     const { Impit } = await import("impit");
     const impit = new Impit({ browser: "chrome" });
 
+    // Realistic Chrome headers to avoid WAF / Cloudflare blocks on datacenter IPs
+    const browserHeaders: Record<string, string> = {
+      "Accept-Language": "en-US,en;q=0.9",
+      "Cache-Control": "no-cache",
+      "Pragma": "no-cache",
+      "Sec-Ch-Ua": '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
+      "Sec-Ch-Ua-Mobile": "?0",
+      "Sec-Ch-Ua-Platform": '"Windows"',
+      "Sec-Fetch-Dest": "empty",
+      "Sec-Fetch-Mode": "cors",
+      "Sec-Fetch-Site": "same-origin",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    };
+
     // Step 1: Resolve ISIN → cbonds numeric ETF ID via suggest API
     const suggestUrl = `https://cbonds.com/api/etf/exchange_traded_funds/suggest/${encodeURIComponent(key)}/`;
     const suggestResp = await impit.fetch(suggestUrl, {
-      headers: { "Accept": "application/json" },
+      headers: {
+        ...browserHeaders,
+        "Accept": "application/json",
+        "Referer": "https://cbonds.com/etf/",
+      },
       signal: AbortSignal.timeout(15_000),
     });
 
@@ -651,6 +670,15 @@ async function fetchCbondsHoldings(isin: string): Promise<CbondsResult> {
 
     // Step 2: Fetch the ETF detail page
     const pageResp = await impit.fetch(`https://cbonds.com/etf/${cbondsId}/`, {
+      headers: {
+        ...browserHeaders,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+      },
       signal: AbortSignal.timeout(30_000),
     });
 
