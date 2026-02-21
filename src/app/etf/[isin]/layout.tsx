@@ -25,11 +25,20 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
         title: `${title} — SeeTF`,
         description,
         type: "article",
+        images: [
+          {
+            url: "/og-image.png",
+            width: 1200,
+            height: 630,
+            alt: `${name} — SeeTF ETF Analysis`,
+          },
+        ],
       },
       twitter: {
-        card: "summary",
+        card: "summary_large_image",
         title: `${title} — SeeTF`,
         description,
+        images: ["/og-image.png"],
       },
     };
   } catch {

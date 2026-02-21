@@ -19,6 +19,21 @@ export const metadata: Metadata = {
     title: "SeeTF — Free ETF Portfolio Analyzer",
     description:
       "Enter your stock and ETF positions and get a detailed, real-time overview of your entire portfolio. 100% free, no catch.",
+    images: [
+      {
+        url: "/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "SeeTF — ETF Portfolio Analyzer showing portfolio overview with holdings, countries, and sectors",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "SeeTF — Free ETF Portfolio Analyzer",
+    description:
+      "Enter your stock and ETF positions and get a detailed, real-time overview of your entire portfolio. 100% free, no catch.",
+    images: ["/og-image.png"],
   },
 };
 
