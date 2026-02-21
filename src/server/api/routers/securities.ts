@@ -1350,6 +1350,105 @@ async function fetchAllSecurities(): Promise<Security[]> {
   return securities;
 }
 
+/* ─── JustETF Portfolio Scraping ─── */
+
+interface JustEtfPortfolioEntry {
+  isin: string;
+  name: string;
+  weight: number; // percentage, e.g. 54.04
+}
+
+interface JustEtfPortfolioResult {
+  title: string;
+  entries: JustEtfPortfolioEntry[];
+}
+
+/**
+ * Scrape a published JustETF portfolio page and extract the ETF positions
+ * with their ISIN and weight percentage.
+ *
+ * Example URL: https://www.justetf.com/en-be/portfolio/d5643
+ */
+async function scrapeJustEtfPortfolio(
+  url: string,
+): Promise<JustEtfPortfolioResult> {
+  // Dynamic import (impit is ESM-only with native bindings)
+  const { Impit } = await import("impit");
+  const impit = new Impit({ browser: "chrome" });
+
+  const res = await impit.fetch(url, {
+    headers: {
+      "Accept":
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!res.ok) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `JustETF returned status ${res.status}. Make sure the portfolio URL is valid and publicly shared.`,
+    });
+  }
+
+  const html = await res.text();
+  const $ = cheerio.load(html);
+
+  // Extract portfolio title from the <h1> inside #ppprofile
+  const title = $("#ppprofile h1").text().trim() || "Imported Portfolio";
+
+  const entries: JustEtfPortfolioEntry[] = [];
+
+  // Each data row in the portfolio table has:
+  //  - An <a> linking to the ETF profile page with ISIN in the href
+  //  - A <td class="colweight"> with the weight percentage
+  //  - A <td class="colname"> with the category/name
+  // Cash rows have no profile link — we skip them.
+  $("table tr").each((_i, row) => {
+    const $row = $(row);
+
+    // Find ISIN from the etf-profile link in this row
+    let isin = "";
+    $row.find("a[href*='etf-profile']").each((_j, a) => {
+      const href = $(a).attr("href") ?? "";
+      const m = /isin=([A-Z0-9]{12})/.exec(href);
+      if (m) isin = m[1]!;
+    });
+
+    if (!isin) return; // skip header, footer & cash rows
+
+    // Extract the weight from the last <td> (class "colweight" or last cell)
+    const weightCell = $row.find("td.colweight").first();
+    const weightText = weightCell.length
+      ? weightCell.text().trim()
+      : $row.find("td").last().text().trim();
+    const weight = parseFloat(weightText.replace("%", "").replace(",", "."));
+    if (isNaN(weight) || weight <= 0) return;
+
+    // Extract the descriptive name from the colname tooltip or text
+    const nameCell = $row.find("td.colname").first();
+    const name =
+      nameCell.attr("title")?.trim() ??
+      nameCell.find(".v-ellip").first().text().trim() ??
+      "";
+
+    entries.push({ isin, name, weight });
+  });
+
+  if (entries.length === 0) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "No ETF positions found on this page. Make sure the URL points to a published JustETF portfolio.",
+    });
+  }
+
+  return { title, entries };
+}
+
 /* ─── Router ─── */
 export const securitiesRouter = createTRPCRouter({
   /**
@@ -1443,6 +1542,79 @@ export const securitiesRouter = createTRPCRouter({
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: `Failed to fetch full ETF composition for ISIN ${input.isin}: ${err instanceof Error ? err.message : "Unknown error"}`,
+        });
+      }
+    }),
+
+  /**
+   * Import a published JustETF portfolio by scraping the public portfolio page.
+   * Returns the list of ETF positions with ISIN and weight (percentage).
+   */
+  importJustEtfPortfolio: publicProcedure
+    .input(
+      z.object({
+        url: z
+          .string()
+          .url()
+          .refine(
+            (u) => {
+              try {
+                const parsed = new URL(u);
+                return (
+                  parsed.hostname === "www.justetf.com" &&
+                  /^\/[a-z]{2}(-[a-z]{2})?\/portfolio\/[a-zA-Z0-9]+$/.test(parsed.pathname)
+                );
+              } catch {
+                return false;
+              }
+            },
+            {
+              message:
+                "URL must be a JustETF portfolio link, e.g. https://www.justetf.com/en-be/portfolio/d5643",
+            },
+          ),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      try {
+        const result = await scrapeJustEtfPortfolio(input.url);
+
+        // Try to resolve each ISIN to a full security (name + ticker) from
+        // the JustETF database so that the imported positions are usable
+        // in the portfolio builder's autocomplete.
+        const db = await fetchJustEtfDatabase();
+        const isinToDbEntry = new Map(db.map((e) => [e.isin, e]));
+
+        const positions = await Promise.all(
+          result.entries.map(async (entry) => {
+            const dbEntry = isinToDbEntry.get(entry.isin);
+            const name = dbEntry?.name ?? entry.name;
+
+            // Resolve ticker (cached after first lookup)
+            let ticker: string;
+            try {
+              ticker = await resolveEtfTicker(entry.isin);
+            } catch {
+              ticker = entry.isin;
+            }
+
+            return {
+              isin: entry.isin,
+              name,
+              ticker,
+              weight: entry.weight,
+              type: "etf" as const,
+            };
+          }),
+        );
+
+        return { title: result.title, positions };
+      } catch (err) {
+        console.error("[securities.importJustEtfPortfolio] error:", err);
+        if (err instanceof TRPCError) throw err;
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: `Failed to import portfolio: ${err instanceof Error ? err.message : "Unknown error"}`,
         });
       }
     }),

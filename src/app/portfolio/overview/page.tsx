@@ -1379,11 +1379,6 @@ export default function PortfolioOverviewPage() {
             <h1 className="text-lg font-bold text-white sm:text-xl">
               Portfolio Overview
             </h1>
-            {totalPortfolioValue && percentageCurrencySymbol && (
-              <span className="hidden text-sm text-gray-500 sm:inline">
-                {percentageCurrencySymbol}{totalPortfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-            )}
           </div>
           <button
             onClick={() => router.push("/portfolio?edit=true")}

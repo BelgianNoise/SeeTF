@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   AlertCircleIcon,
   ArrowRightIcon,
+  DownloadIcon,
   PlusIcon,
   ShieldCheckIcon,
   TrashIcon,
@@ -101,6 +102,9 @@ function PortfolioPageInner() {
   const [hydrated, setHydrated] = useState(false);
   const [redirecting, setRedirecting] = useState(true); // true until we know whether to redirect
   const [showClearModal, setShowClearModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importUrl, setImportUrl] = useState("");
+  const [importError, setImportError] = useState("");
 
   /* ── Securities list (cached in localStorage, fetched via getAll) ── */
   const [securities, setSecurities] = useState<SecurityResult[]>([]);
@@ -109,6 +113,56 @@ function PortfolioPageInner() {
     staleTime: 24 * 60 * 60 * 1000, // 24 hours — matches localStorage TTL
     refetchOnWindowFocus: false,
     refetchOnMount: false,
+  });
+
+  const importMutation = api.securities.importJustEtfPortfolio.useMutation({
+    onSuccess: (data) => {
+      // Normalize weights so they add up to exactly 100%
+      const totalWeight = data.positions.reduce((sum, p) => sum + p.weight, 0);
+      const scale = totalWeight > 0 ? 100 / totalWeight : 1;
+
+      // Compute scaled values with 2 decimal precision
+      const scaled = data.positions.map((p) =>
+        parseFloat((p.weight * scale).toFixed(2)),
+      );
+
+      // Fix rounding drift: adjust the largest position so the total is exactly 100
+      const scaledSum = scaled.reduce((a, b) => a + b, 0);
+      const drift = parseFloat((100 - scaledSum).toFixed(2));
+      if (drift !== 0 && scaled.length > 0) {
+        const maxIdx = scaled.indexOf(Math.max(...scaled));
+        scaled[maxIdx] = parseFloat((scaled[maxIdx]! + drift).toFixed(2));
+      }
+
+      // Build positions from the imported data
+      let id = 1;
+      const importedPositions: Position[] = data.positions.map((p, i) => ({
+        id: id++,
+        name: p.name,
+        isin: p.isin,
+        ticker: p.ticker,
+        security: {
+          ticker: p.ticker,
+          isin: p.isin,
+          name: p.name,
+          type: p.type,
+        },
+        value: scaled[i]!.toFixed(2),
+      }));
+
+      nextId = id;
+      setPositions(importedPositions);
+      setInputMode("percentage");
+      setCurrency("EUR"); // JustETF portfolios are EUR-based
+      setTotalPortfolioValue("");
+      setSubmitted(false);
+      setShowImportModal(false);
+      setImportUrl("");
+      setImportError("");
+    },
+    onError: (err) => {
+      setImportError(err.message);
+    },
   });
 
   // On mount: try localStorage cache first
@@ -198,17 +252,8 @@ function PortfolioPageInner() {
     if (positions.length === 0) {
       errs.push("At least one position is required.");
     }
-    if (
-      inputMode === "percentage" &&
-      positions.length > 0 &&
-      Math.abs(totalPercentage - 100) >= 0.01
-    ) {
-      errs.push(
-        `Percentages must add up to exactly 100%. Current total: ${totalPercentage.toFixed(1)}%.`,
-      );
-    }
     return errs;
-  }, [positions, inputMode, totalPercentage]);
+  }, [positions]);
 
   const hasErrors = rowErrors.size > 0 || globalErrors.length > 0;
 
@@ -216,6 +261,26 @@ function PortfolioPageInner() {
     e.preventDefault();
     setSubmitted(true);
     if (hasErrors) return; // block submission
+
+    // In percentage mode, normalize so values add up to exactly 100%
+    if (inputMode === "percentage" && positions.length > 0) {
+      const total = positions.reduce(
+        (sum, p) => sum + (parseFloat(p.value) || 0),
+        0,
+      );
+      if (total > 0 && Math.abs(total - 100) >= 0.01) {
+        const diff = 100 - total; // positive if under 100, negative if over
+        const perPosition = diff / positions.length;
+        const normalized = positions.map((p) => ({
+          ...p,
+          value: Math.max(0, (parseFloat(p.value) || 0) + perPosition)
+            .toFixed(2)
+            .replace(/\.?0+$/, ""), // trim trailing zeros
+        }));
+        setPositions(normalized);
+      }
+    }
+
     // Navigate to the overview page (data is already in localStorage)
     router.push("/portfolio/overview");
   };
@@ -229,6 +294,16 @@ function PortfolioPageInner() {
     setTotalPortfolioValue("");
     setSubmitted(false);
     setShowClearModal(false);
+  };
+
+  const handleImport = () => {
+    setImportError("");
+    const trimmed = importUrl.trim();
+    if (!trimmed) {
+      setImportError("Please paste a JustETF portfolio URL.");
+      return;
+    }
+    importMutation.mutate({ url: trimmed });
   };
 
   /** Show field-level errors only after the user has tried to submit */
@@ -250,7 +325,8 @@ function PortfolioPageInner() {
     <main className="min-h-screen bg-gray-950 font-sans text-gray-100 overflow-x-hidden">
       {/* ─── Compact Header ─── */}
       <section className="border-b border-white/5 bg-gray-900/40">
-<div className="mx-auto max-w-6xl px-4 py-4 sm:px-6">
+        {/* Row 1: Logo + Title | Action buttons */}
+        <div className="mx-auto max-w-6xl px-4 pt-4 pb-3 sm:px-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3 sm:gap-4">
               <Link href="/" className="text-xl font-bold tracking-tight text-white">
@@ -260,35 +336,65 @@ function PortfolioPageInner() {
               <h1 className="text-base font-bold text-white sm:text-xl">
                 Build Your Portfolio
               </h1>
-              <span className="hidden text-sm text-gray-500 sm:inline">
-                {positions.length} position{positions.length !== 1 ? "s" : ""}
-              </span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
+              {/* ── Import from JustETF ── */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowImportModal(true);
+                  setImportUrl("");
+                  setImportError("");
+                }}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-400 transition hover:border-emerald-500/40 hover:bg-emerald-500/20 hover:text-emerald-300"
+              >
+                <DownloadIcon className="h-4 w-4" />
+                <span className="hidden sm:inline">Import from JustETF</span>
+                <span className="sm:hidden">Import</span>
+              </button>
+
+              {/* ── Clear Portfolio ── */}
+              <button
+                type="button"
+                onClick={() => setShowClearModal(true)}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-red-500/20 bg-red-500/10 px-3 text-sm font-semibold text-red-400 transition hover:border-red-500/40 hover:bg-red-500/20 hover:text-red-300"
+              >
+                <Trash2Icon className="h-4 w-4" />
+                <span className="hidden sm:inline">Clear</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Row 2: Toolbar — toggle, currency, percentage badge */}
+        <div className="border-t border-white/5 bg-gray-900/30">
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2 px-4 py-2.5 sm:gap-3 sm:px-6">
             {/* ── Input Mode Toggle ── */}
-            <div className="inline-flex overflow-hidden rounded-lg border border-white/10 bg-gray-900">
+            <div className="inline-flex h-9 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-gray-900">
               <button
                 type="button"
                 onClick={() => setInputMode("amount")}
-                className={`px-3 py-1.5 text-xs font-semibold transition ${
+                className={`px-2.5 text-sm font-semibold transition sm:px-3 ${
                   inputMode === "amount"
                     ? "bg-emerald-500 text-gray-950"
                     : "text-gray-400 hover:text-white hover:bg-white/5"
                 }`}
               >
-                Amount
+                <span className="sm:hidden">Amt</span>
+                <span className="hidden sm:inline">Amount</span>
               </button>
               <button
                 type="button"
                 onClick={() => setInputMode("percentage")}
-                className={`px-3 py-1.5 text-xs font-semibold transition ${
+                className={`px-2.5 text-sm font-semibold transition sm:px-3 ${
                   inputMode === "percentage"
                     ? "bg-emerald-500 text-gray-950"
                     : "text-gray-400 hover:text-white hover:bg-white/5"
                 }`}
               >
-                Percentage
+                <span className="sm:hidden">%</span>
+                <span className="hidden sm:inline">Percentage</span>
               </button>
             </div>
 
@@ -301,6 +407,7 @@ function PortfolioPageInner() {
               className="w-28"
             />
 
+            {/* ── Percentage Badge ── */}
             <div
               className={`overflow-hidden transition-all duration-300 ease-in-out ${
                 inputMode === "percentage"
@@ -317,20 +424,9 @@ function PortfolioPageInner() {
                       : "text-yellow-400"
                 }`}
               >
-                {totalPercentage.toFixed(1)}%
+                {totalPercentage.toFixed(2)}%
               </span>
             </div>
-
-            {/* ── Clear Portfolio ── */}
-            <button
-              type="button"
-              onClick={() => setShowClearModal(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-400 transition hover:border-red-500/40 hover:bg-red-500/20 hover:text-red-300"
-            >
-              <Trash2Icon className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Clear</span>
-            </button>
-          </div>
           </div>
         </div>
       </section>
@@ -471,13 +567,13 @@ function PortfolioPageInner() {
                     <input
                       type="number"
                       min="0"
-                      step={inputMode === "amount" ? "0.01" : "0.1"}
+                      step="0.01"
                       max={inputMode === "percentage" ? "100" : undefined}
                       value={pos.value}
                       onChange={(e) =>
                         updatePosition(pos.id, { value: e.target.value })
                       }
-                      placeholder={inputMode === "amount" ? "10000" : "25.0"}
+                      placeholder={inputMode === "amount" ? "10000" : "25.00"}
                       className={`h-10 w-full rounded-lg border ${
                         showErrors && errs?.value
                           ? "border-red-500/50 focus:border-red-500/70 focus:ring-red-500/30"
@@ -582,6 +678,122 @@ function PortfolioPageInner() {
                 className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-500"
               >
                 Clear Portfolio
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Import from JustETF Modal ─── */}
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => {
+              if (!importMutation.isPending) setShowImportModal(false);
+            }}
+          />
+          {/* Dialog */}
+          <div className="relative z-10 mx-4 w-full max-w-lg rounded-2xl border border-white/10 bg-gray-900 p-6 shadow-2xl shadow-black/50">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/15">
+                <DownloadIcon className="h-5 w-5 text-emerald-400" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-white">Import from JustETF</h2>
+                <p className="text-xs text-gray-500">Import a published portfolio in one click</p>
+              </div>
+            </div>
+
+            <div className="mb-4 space-y-3">
+              <div>
+                <label
+                  htmlFor="justetf-url"
+                  className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-gray-500"
+                >
+                  Portfolio URL
+                </label>
+                <input
+                  id="justetf-url"
+                  type="url"
+                  value={importUrl}
+                  onChange={(e) => {
+                    setImportUrl(e.target.value);
+                    if (importError) setImportError("");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleImport();
+                    }
+                  }}
+                  placeholder="https://www.justetf.com/en-be/portfolio/d5643"
+                  disabled={importMutation.isPending}
+                  className="h-10 w-full rounded-lg border border-white/10 bg-gray-800 px-3 text-sm text-white placeholder-gray-600 outline-none transition focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 disabled:opacity-50"
+                  autoFocus
+                />
+              </div>
+
+              <p className="flex items-start gap-2 text-xs leading-relaxed text-gray-500">
+                <span className="mt-0.5 shrink-0 text-base">💡</span>
+                Open any published portfolio on{" "}
+                <a
+                  href="https://www.justetf.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-emerald-500 underline underline-offset-2 hover:text-emerald-400"
+                >
+                  justetf.com
+                </a>
+                {" "}and copy the URL from your browser&apos;s address bar.
+              </p>
+            </div>
+
+            {/* Warning */}
+            <div className="mb-5 flex items-start gap-2.5 rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-3.5 py-2.5">
+              <AlertCircleIcon className="mt-0.5 h-4 w-4 shrink-0 text-yellow-500/70" />
+              <p className="text-xs leading-relaxed text-yellow-200/70">
+                <span className="font-medium text-yellow-200/90">This will overwrite your current portfolio.</span>{" "}
+                All existing positions will be replaced with the imported ones. The portfolio will be set to percentage mode.
+                Cash positions will be ignored and ETF allocations will be adjusted accordingly.
+              </p>
+            </div>
+
+            {/* Error message */}
+            {importError && (
+              <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/5 px-3.5 py-2.5">
+                <AlertCircleIcon className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+                <p className="text-xs leading-relaxed text-red-300">{importError}</p>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowImportModal(false)}
+                disabled={importMutation.isPending}
+                className="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-gray-300 transition hover:bg-white/10 hover:text-white disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleImport}
+                disabled={importMutation.isPending || !importUrl.trim()}
+                className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-gray-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {importMutation.isPending ? (
+                  <>
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-900/30 border-t-gray-900" />
+                    Importing…
+                  </>
+                ) : (
+                  <>
+                    <DownloadIcon className="h-4 w-4" />
+                    Import Portfolio
+                  </>
+                )}
               </button>
             </div>
           </div>
