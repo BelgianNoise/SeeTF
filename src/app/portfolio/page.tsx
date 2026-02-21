@@ -7,6 +7,7 @@ import {
   AlertCircleIcon,
   ArrowRightIcon,
   PlusIcon,
+  ShieldCheckIcon,
   TrashIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -518,7 +519,16 @@ function PortfolioPageInner() {
           </button>
 
           {/* ── Submit ── */}
-          <div className="mt-10 flex flex-col items-center gap-3">
+          <div className="mt-6 flex flex-col items-center gap-4">
+            {/* ─── Privacy Disclaimer ─── */}
+            <div className="flex max-w-xl items-start gap-2.5 rounded-lg border border-white/5 bg-gray-900/40 px-3.5 py-2.5">
+              <ShieldCheckIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500/70" />
+              <p className="text-xs leading-relaxed text-gray-500">
+                <span className="font-medium text-gray-400">Your data never leaves your browser.</span>{" "}
+                Stored locally via localStorage — no accounts, no servers, no tracking.
+              </p>
+            </div>
+
             {showErrors && hasErrors && (
               <p className="text-xs font-medium text-red-400">
                 Resolve all errors above before submitting.
@@ -538,7 +548,6 @@ function PortfolioPageInner() {
           </div>
         </form>
       </section>
-
 
       {/* ─── Clear Portfolio Confirmation Modal ─── */}
       {showClearModal && (

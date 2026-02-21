@@ -177,25 +177,45 @@ async function resolveEtfTicker(isin: string): Promise<string> {
 
 /**
  * Search the JustETF ETF database for matching ETFs.
- * Matches against fund name, ISIN, and WKN. Returns up to 10 results
- * with ticker symbols resolved from profile pages (cached after first lookup).
+ * Matches against fund name, ISIN, WKN, and ticker symbol.
+ * Ticker matching uses the InvestEngine securities list (cached) to
+ * cross-reference ISIN → ticker. Returns up to 10 results with ticker
+ * symbols resolved from profile pages (cached after first lookup).
  */
 async function searchJustEtfEtfs(query: string): Promise<Security[]> {
   const db = await fetchJustEtfDatabase();
   const q = query.toLowerCase();
+
+  // Build an ISIN → ticker lookup from InvestEngine data for ticker-based search
+  let isinToTicker: Map<string, string>;
+  try {
+    const ieList = await fetchInvestEngineSecuritiesList();
+    isinToTicker = new Map(ieList.map((s) => [s.isin, s.ticker]));
+  } catch {
+    isinToTicker = new Map();
+  }
 
   const matches = db
     .filter(
       (e) =>
         e.name.toLowerCase().includes(q) ||
         e.isin.toLowerCase().includes(q) ||
-        e.wkn.toLowerCase().includes(q),
+        e.wkn.toLowerCase().includes(q) ||
+        (isinToTicker.get(e.isin)?.toLowerCase().includes(q) ?? false),
     )
     .slice(0, 10);
 
   if (matches.length === 0) return [];
 
   // Resolve tickers in parallel (profile page scraping, cached after first hit)
+  // If we already have a ticker from InvestEngine, seed the cache to avoid scraping
+  for (const e of matches) {
+    const ieTicker = isinToTicker.get(e.isin);
+    if (ieTicker && !etfTickerCache.has(e.isin)) {
+      etfTickerCache.set(e.isin, ieTicker);
+    }
+  }
+
   const tickers = await Promise.all(
     matches.map((e) => resolveEtfTicker(e.isin)),
   );

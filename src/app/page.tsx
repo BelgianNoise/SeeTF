@@ -1,3 +1,4 @@
+import { type Metadata } from "next";
 import Link from "next/link";
 import {
   ArrowRightIcon,
@@ -9,6 +10,17 @@ import {
   GlobeIcon,
   SearchIcon,
 } from "lucide-react";
+
+export const metadata: Metadata = {
+  title: "SeeTF — Free ETF Portfolio Analyzer",
+  description:
+    "Enter your stock and ETF positions and get a detailed, real-time overview of your entire portfolio. Analyze holdings, country exposure, sectors, TER, and returns — 100% free.",
+  openGraph: {
+    title: "SeeTF — Free ETF Portfolio Analyzer",
+    description:
+      "Enter your stock and ETF positions and get a detailed, real-time overview of your entire portfolio. 100% free, no catch.",
+  },
+};
 
 /* ───────────────────────── mock portfolio positions ───────────────────────── */
 const mockPositions = [
