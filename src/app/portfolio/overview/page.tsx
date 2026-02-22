@@ -212,6 +212,8 @@ type CompositionData = {
   sectors: Array<{ name: string; weight: number }>;
   holdings: Array<{ name: string; weight: number }>;
   ter?: string;
+  etfName?: string;
+  hasHoldingsSection?: boolean;
 };
 
 function EtfDataFetcher({
@@ -235,7 +237,14 @@ function EtfDataFetcher({
       const holdings =
         data.investEngineHoldings?.length > 0 ? data.investEngineHoldings :
         data.cbondsHoldings?.length > 0 ? data.cbondsHoldings : data.holdings;
-      onData(isin, { countries: data.countries, sectors: data.sectors, holdings, ter: data.ter });
+      onData(isin, {
+        countries: data.countries,
+        sectors: data.sectors,
+        holdings,
+        ter: data.ter,
+        etfName: data.etfName,
+        hasHoldingsSection: data.hasHoldingsSection,
+      });
     } else if (!isLoading) {
       onData(isin, null);
     }
@@ -380,24 +389,45 @@ function PortfolioDistribution({
       const comp = compositionMap[pos.isin];
       if (!comp) continue;
 
+      // Determine if this ETF has actual stock holdings
+      const hasStockHoldings = comp.holdings.length > 0;
+
       // Countries & sectors use ETF-only weights (exclude stocks from allocation)
       const etfWeight = etfPositionWeights[pos.isin] ?? 0;
       if (etfWeight > 0) {
-        for (const c of comp.countries) {
-          const cName = c.name === "Others" ? "Other" : c.name;
-          countryMap[cName] = (countryMap[cName] ?? 0) + (c.weight * etfWeight) / 100;
+        if (comp.countries.length > 0) {
+          for (const c of comp.countries) {
+            const cName = c.name === "Others" ? "Other" : c.name;
+            countryMap[cName] = (countryMap[cName] ?? 0) + (c.weight * etfWeight) / 100;
+          }
+        } else if (!hasStockHoldings) {
+          // ETFs without holdings and no country data (e.g. precious metals) → "Global"
+          countryMap.Global = (countryMap.Global ?? 0) + etfWeight;
         }
-        for (const s of comp.sectors) {
-          const sName = s.name === "Others" ? "Other" : s.name;
-          sectorMap[sName] = (sectorMap[sName] ?? 0) + (s.weight * etfWeight) / 100;
+
+        if (comp.sectors.length > 0) {
+          for (const s of comp.sectors) {
+            const sName = s.name === "Others" ? "Other" : s.name;
+            sectorMap[sName] = (sectorMap[sName] ?? 0) + (s.weight * etfWeight) / 100;
+          }
+        } else if (!hasStockHoldings) {
+          // ETFs without holdings and no sector data → "Other"
+          sectorMap.Other = (sectorMap.Other ?? 0) + etfWeight;
         }
       }
 
       // Holdings use full portfolio weights (include stocks)
       const weight = positionWeights[pos.isin] ?? 0;
       if (weight > 0) {
-        for (const h of comp.holdings) {
-          addHolding(h.name, (h.weight * weight) / 100);
+        if (hasStockHoldings) {
+          for (const h of comp.holdings) {
+            addHolding(h.name, (h.weight * weight) / 100);
+          }
+        } else {
+          // ETFs without stock holdings (e.g. precious metals):
+          // Show the ETF name itself as a holding with its full portfolio weight
+          const etfDisplayName = comp.etfName ?? pos.name ?? pos.ticker ?? pos.isin;
+          addHolding(etfDisplayName, weight);
         }
       }
     }
