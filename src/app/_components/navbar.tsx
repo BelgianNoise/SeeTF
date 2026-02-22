@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 const navLinks = [
+  { href: "/analyzer", label: "ETF Analyzer" },
   { href: "/#features", label: "Features" },
   { href: "/#how-it-works", label: "How It Works" },
   { href: "/pricing", label: "Pricing" },
@@ -50,7 +51,9 @@ export default function Navbar() {
             const isActive =
               href === "/pricing"
                 ? pathname === "/pricing"
-                : false;
+                : href === "/analyzer"
+                  ? pathname === "/analyzer"
+                  : false;
 
             return (
               <Link

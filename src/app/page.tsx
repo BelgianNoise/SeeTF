@@ -649,6 +649,33 @@ export default function Home() {
         </div>
       </section>
 
+      {/* ─── ETF Analyzer CTA ─── */}
+      <section className="border-t border-white/5 bg-gradient-to-b from-emerald-500/[0.03] to-transparent py-20">
+        <div className="mx-auto flex max-w-4xl flex-col items-center gap-6 px-6 text-center md:flex-row md:text-left">
+          <div className="flex-1">
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-400">
+              <SearchIcon className="h-3.5 w-3.5" />
+              New Feature
+            </div>
+            <h2 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+              ETF Analyzer
+            </h2>
+            <p className="mt-3 max-w-lg text-gray-400">
+              Want to explore an ETF without building a portfolio first? Search any
+              ETF by name, ticker, or ISIN and instantly see its full breakdown —
+              holdings, countries, sectors, returns, and more.
+            </p>
+          </div>
+          <Link
+            href="/analyzer"
+            className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-6 py-3 text-sm font-semibold text-gray-950 shadow-lg shadow-emerald-500/25 transition hover:bg-emerald-400"
+          >
+            <SearchIcon className="h-4 w-4" />
+            Explore ETFs
+          </Link>
+        </div>
+      </section>
+
       {/* ─── Dashboard Preview ─── */}
       <section id="preview" className="border-t border-white/5 py-24 bg-gray-900/50">
         <div className="mx-auto max-w-7xl px-6">
