@@ -9,6 +9,7 @@ export interface Security {
   isin: string;
   name: string;
   type: "stock" | "etf";
+  altTickers?: string[];
 }
 
 /* ─── Yahoo Finance response types ─── */
@@ -78,6 +79,65 @@ let etfDatabaseCache: CacheEntry<JustEtfEntry[]> | null = null;
 
 /** Ticker cache populated lazily when ETF profile pages are scraped */
 const etfTickerCache = new Map<string, string>();
+
+/** Alternative tickers cache — all exchange tickers for an ETF (populated from JustETF profile) */
+const etfAltTickersCache = new Map<string, string[]>();
+
+/**
+ * Static mapping of well-known alternative tickers for popular ETFs.
+ * These are tickers used on different exchanges for the same underlying ETF.
+ * Pre-seeded into etfAltTickersCache so that search works immediately
+ * without needing to scrape profile pages first.
+ */
+const KNOWN_ALT_TICKERS: Record<string, string[]> = {
+  // Vanguard FTSE All-World UCITS ETF (USD) Accumulating
+  "IE00BK5BQT80": ["VWRP", "VWCE", "VWRA"],
+  // Vanguard FTSE All-World UCITS ETF (USD) Distributing
+  "IE00B3RBWM25": ["VWRL", "VWRD", "VGWL"],
+  // iShares Core S&P 500 UCITS ETF (Acc)
+  "IE00B5BMR087": ["CSPX", "CSP1", "SXR8"],
+  // iShares Core MSCI World UCITS ETF USD (Acc)
+  "IE00B4L5Y983": ["IWDA", "SWDA", "EUNL"],
+  // Vanguard S&P 500 UCITS ETF (USD) Distributing
+  "IE00B3XXRP09": ["VUSA", "VUSD"],
+  // Vanguard S&P 500 UCITS ETF (USD) Accumulating
+  "IE000XZSV718": ["VUAG", "VUAA"],
+  // Invesco EQQQ NASDAQ-100 UCITS ETF
+  "IE0032077012": ["EQQQ", "QQQ3"],
+  // iShares Core MSCI EM IMI UCITS ETF
+  "IE00BKM4GZ66": ["IEMM", "EIMI", "IS3N"],
+  // iShares MSCI ACWI UCITS ETF (Acc)
+  "IE00B6R52259": ["ISAC", "SSAC", "IUSQ"],
+  // Xtrackers MSCI World UCITS ETF 1C
+  "IE00BJ0KDQ92": ["XDWD", "XDWL"],
+  // iShares Core MSCI Europe UCITS ETF EUR (Acc)
+  "IE00B4K48X80": ["IMAE", "SMEA", "SXR7"],
+  // SPDR S&P 500 UCITS ETF
+  "IE00B6YX5C33": ["SPY5", "SPYL"],
+  // iShares Core FTSE 100 UCITS ETF GBP (Dist)
+  "IE0005042456": ["ISF", "CSUK"],
+  // Vanguard FTSE Developed World UCITS ETF (USD) Distributing
+  "IE00BKX55T58": ["VEVE", "VDEV"],
+  // Vanguard FTSE Developed World UCITS ETF (USD) Accumulating
+  "IE00BK5BQV03": ["VHVG", "VDRA"],
+  // iShares MSCI World Small Cap UCITS ETF
+  "IE00BF4RFH31": ["IUSN", "WSML", "USAL"],
+  // Vanguard FTSE 100 UCITS ETF (GBP) Distributing
+  "IE00B810Q511": ["VUKE", "VUKG"],
+  // iShares Core EUR Corp Bond UCITS ETF
+  "IE00B3F81R35": ["IEAC", "IBCX"],
+  // Vanguard USD Treasury Bond UCITS ETF
+  "IE00BZ163M45": ["VDTY", "VUTY"],
+  // iShares Physical Gold ETC
+  "IE00B4ND3602": ["IGLN", "PPFB", "CSGOLD"],
+};
+
+// Pre-seed etfAltTickersCache from the static mapping so search works immediately
+for (const [isin, alts] of Object.entries(KNOWN_ALT_TICKERS)) {
+  if (!etfAltTickersCache.has(isin)) {
+    etfAltTickersCache.set(isin, alts);
+  }
+}
 
 /**
  * Fetch the full JustETF ETF database by parsing the embedded JSON
@@ -168,6 +228,24 @@ async function resolveEtfTicker(isin: string): Promise<string> {
 
     const resolved = ticker || isin;
     etfTickerCache.set(isin, resolved);
+
+    // Parse all exchange tickers from the listings table and merge with existing
+    {
+      const existing = etfAltTickersCache.get(isin) ?? [];
+      const altTickers = new Set<string>(existing);
+      if (ticker) altTickers.add(ticker);
+      $('tr[data-testid^="etf-trade-data-panel_row-"]').each((_, row) => {
+        const t = $(row)
+          .find('[data-testid$="_ticker"]')
+          .text()
+          .trim();
+        if (t) altTickers.add(t);
+      });
+      if (altTickers.size > 0) {
+        etfAltTickersCache.set(isin, Array.from(altTickers));
+      }
+    }
+
     return resolved;
   } catch {
     etfTickerCache.set(isin, isin);
@@ -177,7 +255,8 @@ async function resolveEtfTicker(isin: string): Promise<string> {
 
 /**
  * Search the JustETF ETF database for matching ETFs.
- * Matches against fund name, ISIN, WKN, and ticker symbol.
+ * Matches against fund name, ISIN, WKN, ticker symbol, and alternative
+ * tickers (all exchange-specific symbols scraped from JustETF profile pages).
  * Ticker matching uses the InvestEngine securities list (cached) to
  * cross-reference ISIN → ticker. Returns up to 10 results with ticker
  * symbols resolved from profile pages (cached after first lookup).
@@ -201,7 +280,8 @@ async function searchJustEtfEtfs(query: string): Promise<Security[]> {
         e.name.toLowerCase().includes(q) ||
         e.isin.toLowerCase().includes(q) ||
         e.wkn.toLowerCase().includes(q) ||
-        (isinToTicker.get(e.isin)?.toLowerCase().includes(q) ?? false),
+        (isinToTicker.get(e.isin)?.toLowerCase().includes(q) ?? false) ||
+        (etfAltTickersCache.get(e.isin)?.some((t) => t.toLowerCase().includes(q)) ?? false),
     )
     .slice(0, 10);
 
@@ -226,6 +306,7 @@ async function searchJustEtfEtfs(query: string): Promise<Security[]> {
       isin: e.isin,
       name: e.name,
       type: "etf",
+      altTickers: etfAltTickersCache.get(e.isin),
     }),
   );
 }

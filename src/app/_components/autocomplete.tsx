@@ -96,7 +96,8 @@ export default function AutocompleteInput({
         (s) =>
           s.ticker.toLowerCase().includes(q) ||
           s.name.toLowerCase().includes(q) ||
-          s.isin?.toLowerCase().includes(q),
+          s.isin?.toLowerCase().includes(q) ||
+          s.altTickers?.some((t) => t.toLowerCase().includes(q)),
       );
     }
 

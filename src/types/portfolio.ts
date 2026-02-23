@@ -11,6 +11,7 @@ export interface SecurityResult {
   isin: string;
   name: string;
   type: "stock" | "etf";
+  altTickers?: string[];
 }
 
 /* ─── Frontend display helpers ─── */
