@@ -14,7 +14,7 @@ export default function Footer() {
           </a>{" "}
           using{" "}
           <a
-            href="https://github.com/syrll/cocopilot"
+            href="https://github.com/syrull/cocopilot"
             target="_blank"
             rel="noopener noreferrer"
             className="font-semibold text-emerald-400 transition hover:text-emerald-300"
