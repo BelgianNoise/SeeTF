@@ -78,10 +78,22 @@ const ETF_DB_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 let etfDatabaseCache: CacheEntry<JustEtfEntry[]> | null = null;
 
 /** Ticker cache populated lazily when ETF profile pages are scraped */
+const TICKER_CACHE_MAX_SIZE = 2000;
 const etfTickerCache = new Map<string, string>();
 
 /** Alternative tickers cache — all exchange tickers for an ETF (populated from JustETF profile) */
 const etfAltTickersCache = new Map<string, string[]>();
+
+/** Evict oldest entries from a Map when it exceeds maxSize */
+function evictOldest<K, V>(map: Map<K, V>, maxSize: number) {
+  if (map.size <= maxSize) return;
+  const excess = map.size - maxSize;
+  const iter = map.keys();
+  for (let i = 0; i < excess; i++) {
+    const key = iter.next().value;
+    if (key !== undefined) map.delete(key);
+  }
+}
 
 /**
  * Static mapping of well-known alternative tickers for popular ETFs.
@@ -228,6 +240,7 @@ async function resolveEtfTicker(isin: string): Promise<string> {
 
     const resolved = ticker || isin;
     etfTickerCache.set(isin, resolved);
+    evictOldest(etfTickerCache, TICKER_CACHE_MAX_SIZE);
 
     // Parse all exchange tickers from the listings table and merge with existing
     {
@@ -243,6 +256,7 @@ async function resolveEtfTicker(isin: string): Promise<string> {
       });
       if (altTickers.size > 0) {
         etfAltTickersCache.set(isin, Array.from(altTickers));
+        evictOldest(etfAltTickersCache, TICKER_CACHE_MAX_SIZE);
       }
     }
 
@@ -501,6 +515,12 @@ interface EtfFullComposition extends EtfComposition {
   replication: string;
   /** Distribution policy (e.g. "Accumulating") */
   distributionPolicy: string;
+  /** Distribution frequency (e.g. "Quarterly") — empty for accumulating ETFs */
+  distributionFrequency: string;
+  /** Current dividend yield (e.g. "2.60%") — empty for accumulating ETFs */
+  dividendYield: string;
+  /** Dividends paid in last 12 months (e.g. "EUR 1.98") — empty for accumulating ETFs */
+  dividendLast12m: string;
   /** Cumulative return data scraped from the returns section */
   returns: EtfReturns;
 }
@@ -1204,6 +1224,14 @@ async function fetchEtfFullComposition(isin: string): Promise<EtfFullComposition
   const replication = $('[data-testid="etf-profile-header_replication-value"]').text().trim();
   const distributionPolicy = $('[data-testid="etf-profile-header_distribution-policy-value"]').text().trim();
 
+  // ── Distribution frequency ──
+  const distributionFrequency = $('[data-testid="tl_etf-basics_value_distribution-interval"]').text().trim();
+
+  // ── Dividend yield (distributing ETFs only) ──
+  const dividendsContainer = $('#dividends').parent();
+  const dividendYield = dividendsContainer.find('table').first().find('td.val span').first().text().trim();
+  const dividendLast12m = dividendsContainer.find('table').first().find('td.val2 span').text().trim();
+
   // ── Returns ──
   const returns: EtfReturns = {
     oneMonth: $('[data-testid="etf-returns-section_month-return"]').text().trim(),
@@ -1279,6 +1307,9 @@ async function fetchEtfFullComposition(isin: string): Promise<EtfFullComposition
     ter,
     replication,
     distributionPolicy,
+    distributionFrequency,
+    dividendYield,
+    dividendLast12m,
     returns,
   };
 }
@@ -1530,6 +1561,139 @@ async function scrapeJustEtfPortfolio(
   return { title, entries };
 }
 
+/* ─── JustETF portfolio scrape cache ─── */
+const PORTFOLIO_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const PORTFOLIO_CACHE_MAX = 100;
+const portfolioScrapeCache = new Map<
+  string,
+  CacheEntry<JustEtfPortfolioResult>
+>();
+
+async function cachedScrapeJustEtfPortfolio(
+  url: string,
+): Promise<JustEtfPortfolioResult> {
+  const key = url.toLowerCase().trim();
+  const cached = portfolioScrapeCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+
+  const data = await scrapeJustEtfPortfolio(url);
+  portfolioScrapeCache.set(key, {
+    data,
+    expiresAt: Date.now() + PORTFOLIO_CACHE_TTL_MS,
+  });
+  // Evict oldest entries if needed
+  if (portfolioScrapeCache.size > PORTFOLIO_CACHE_MAX) {
+    const first = portfolioScrapeCache.keys().next().value;
+    if (first !== undefined) portfolioScrapeCache.delete(first);
+  }
+  return data;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   ETF Price Chart (JustETF API)
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+interface PriceDataPoint {
+  date: string; // YYYY-MM-DD
+  price: number;
+}
+
+interface PriceChartResult {
+  series: PriceDataPoint[];
+  latestPrice: number;
+  latestDate: string;
+  performancePct: number;
+  currency: string;
+}
+
+const PRICE_CHART_CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+const PRICE_CHART_CACHE_MAX_SIZE = 200;
+const priceChartCache = new Map<string, CacheEntry<PriceChartResult>>();
+
+function computeDateFrom(period: string): string {
+  const now = new Date();
+  switch (period) {
+    case "1M": now.setMonth(now.getMonth() - 1); break;
+    case "3M": now.setMonth(now.getMonth() - 3); break;
+    case "6M": now.setMonth(now.getMonth() - 6); break;
+    case "1Y": now.setFullYear(now.getFullYear() - 1); break;
+    case "3Y": now.setFullYear(now.getFullYear() - 3); break;
+    case "5Y": now.setFullYear(now.getFullYear() - 5); break;
+    case "MAX": now.setFullYear(2000); break;
+  }
+  return now.toISOString().slice(0, 10);
+}
+
+async function fetchEtfPriceChart(
+  isin: string,
+  period: string,
+  currency: string,
+): Promise<PriceChartResult> {
+  const cacheKey = `${isin.toUpperCase()}_${period}_${currency}`;
+  const cached = priceChartCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.data;
+  }
+
+  const dateFrom = computeDateFrom(period);
+  const dateTo = new Date().toISOString().slice(0, 10);
+
+  const params = new URLSearchParams({
+    locale: "en",
+    currency,
+    valuesType: "MARKET_VALUE",
+    reduceData: "false",
+    includeDividends: "true",
+    dateFrom,
+    dateTo,
+  });
+
+  const url = `https://www.justetf.com/api/etfs/${encodeURIComponent(isin)}/performance-chart?${params}`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": JUSTETF_UA },
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!res.ok) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: `JustETF chart API returned status ${res.status} for ISIN ${isin}`,
+    });
+  }
+
+  const json = (await res.json()) as {
+    latestQuote?: { raw: number };
+    latestQuoteDate?: string;
+    performance?: { raw: number };
+    series?: Array<{ date: string; value: { raw: number } }>;
+  };
+
+  const series: PriceDataPoint[] = (json.series ?? []).map((p) => ({
+    date: p.date,
+    price: p.value.raw,
+  }));
+
+  const result: PriceChartResult = {
+    series,
+    latestPrice: json.latestQuote?.raw ?? (series.length > 0 ? series[series.length - 1]!.price : 0),
+    latestDate: json.latestQuoteDate ?? dateTo,
+    performancePct: json.performance?.raw ?? 0,
+    currency,
+  };
+
+  // Cache
+  if (priceChartCache.size >= PRICE_CHART_CACHE_MAX_SIZE) {
+    const firstKey = priceChartCache.keys().next().value;
+    if (firstKey !== undefined) priceChartCache.delete(firstKey);
+  }
+  priceChartCache.set(cacheKey, {
+    data: result,
+    expiresAt: Date.now() + PRICE_CHART_CACHE_TTL_MS,
+  });
+
+  return result;
+}
+
 /* ─── Router ─── */
 export const securitiesRouter = createTRPCRouter({
   /**
@@ -1628,6 +1792,32 @@ export const securitiesRouter = createTRPCRouter({
     }),
 
   /**
+   * Fetch historical price chart data for an ETF from JustETF API.
+   * Returns daily price points for the requested timeframe.
+   */
+  getEtfPriceChart: publicProcedure
+    .input(
+      z.object({
+        isin: z.string().min(1).max(20),
+        period: z.enum(["1M", "3M", "6M", "1Y", "3Y", "5Y", "MAX"]).default("1Y"),
+        currency: z.enum(["EUR", "USD", "CHF", "GBP"]).default("EUR"),
+      }),
+    )
+    .query(async ({ input }) => {
+      try {
+        const data = await fetchEtfPriceChart(input.isin, input.period, input.currency);
+        return data;
+      } catch (err) {
+        console.error("[securities.getEtfPriceChart] error:", err);
+        if (err instanceof TRPCError) throw err;
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: `Failed to fetch price chart for ISIN ${input.isin}: ${err instanceof Error ? err.message : "Unknown error"}`,
+        });
+      }
+    }),
+
+  /**
    * Import a published JustETF portfolio by scraping the public portfolio page.
    * Returns the list of ETF positions with ISIN and weight (percentage).
    */
@@ -1658,7 +1848,7 @@ export const securitiesRouter = createTRPCRouter({
     )
     .mutation(async ({ input }) => {
       try {
-        const result = await scrapeJustEtfPortfolio(input.url);
+        const result = await cachedScrapeJustEtfPortfolio(input.url);
 
         // Try to resolve each ISIN to a full security (name + ticker) from
         // the JustETF database so that the imported positions are usable

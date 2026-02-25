@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -23,6 +23,11 @@ import {
   Cell,
   Tooltip,
   ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
 } from "recharts";
 import { api } from "~/trpc/react";
 
@@ -290,7 +295,7 @@ function StatCard({
   value: string;
   isReturn?: boolean;
 }) {
-  if (!value) return null;
+  if (!value || value.trim() === "-" || value.trim() === "–") return null;
 
   let valueColor = "text-white";
   let Icon: typeof TrendingUpIcon | null = null;
@@ -365,6 +370,9 @@ function KeyFigures({
     ter: string;
     replication: string;
     distributionPolicy: string;
+    distributionFrequency?: string;
+    dividendYield?: string;
+    dividendLast12m?: string;
     totalHoldings: string;
     returns: {
       oneMonth: string;
@@ -383,11 +391,19 @@ function KeyFigures({
   const hasBasics = data.fundSize ?? data.ter ?? data.totalHoldings ?? isin;
   if (!hasReturns && !hasBasics) return null;
 
+  const isDistributing = data.distributionPolicy?.toLowerCase().includes("distributing");
+
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-4">
       <StatCard label="1Y Return" value={data.returns.oneYear} isReturn />
       <StatCard label="3Y Return" value={data.returns.threeYears} isReturn />
       <StatCard label="5Y Return" value={data.returns.fiveYears} isReturn />
+      {isDistributing && data.dividendYield && (
+        <StatCard label="Dividend Yield" value={data.dividendYield} />
+      )}
+      {isDistributing && data.distributionFrequency && (
+        <StatCard label="Dividend payout" value={data.distributionFrequency} />
+      )}
       <StatCard label="Fund Size" value={data.fundSize} />
       <StatCard
         label="Holdings"
@@ -400,6 +416,229 @@ function KeyFigures({
       <StatCard label="TER" value={data.ter} />
       <StatCard label="Asset Class" value={data.assetClass ?? ""} />
       <IsinStatCard isin={isin} />
+    </div>
+  );
+}
+
+/* ─── Period selector buttons ─── */
+const CHART_PERIODS = ["1M", "3M", "6M", "1Y", "3Y", "5Y", "MAX"] as const;
+type ChartPeriod = (typeof CHART_PERIODS)[number];
+
+/* ─── Price chart tooltip ─── */
+function ChartTooltipContent({
+  active,
+  payload,
+  currency,
+}: {
+  active?: boolean;
+  payload?: Array<{ value: number; payload: { date: string } }>;
+  currency: string;
+}) {
+  if (!active || !payload?.length) return null;
+  const entry = payload[0]!;
+  const date = new Date(entry.payload.date);
+  const formatted = date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  return (
+    <div className="rounded-lg border border-white/10 bg-gray-900 px-3 py-2 shadow-xl">
+      <p className="text-xs text-gray-400">{formatted}</p>
+      <p className="mt-0.5 text-sm font-bold tabular-nums text-white">
+        {currency} {entry.value.toFixed(2)}
+      </p>
+    </div>
+  );
+}
+
+/* ─── Chart currencies supported by JustETF API ─── */
+const CHART_CURRENCIES = ["EUR", "USD", "CHF", "GBP"] as const;
+type ChartCurrency = (typeof CHART_CURRENCIES)[number];
+
+const CHART_CURRENCY_KEY = "seetf-chart-currency";
+
+/** Read the preferred chart currency: saved choice → portfolio currency → EUR */
+function getDefaultCurrency(): ChartCurrency {
+  if (typeof window === "undefined") return "EUR";
+  // 1. Previously saved chart currency
+  const saved = localStorage.getItem(CHART_CURRENCY_KEY);
+  if (saved && (CHART_CURRENCIES as readonly string[]).includes(saved)) {
+    return saved as ChartCurrency;
+  }
+  // 2. Portfolio currency (if it's one the API supports)
+  try {
+    const raw = localStorage.getItem("seetf-portfolio");
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const c = parsed.currency;
+      if (typeof c === "string" && (CHART_CURRENCIES as readonly string[]).includes(c)) {
+        return c as ChartCurrency;
+      }
+    }
+  } catch { /* ignore */ }
+  return "EUR";
+}
+
+/* ─── ETF Price chart section ─── */
+function PriceChartSection({ isin }: { isin: string }) {
+  const [period, setPeriod] = useState<ChartPeriod>("1Y");
+  const [currency, setCurrency] = useState<ChartCurrency>(getDefaultCurrency);
+
+  const handleCurrencyChange = (c: ChartCurrency) => {
+    setCurrency(c);
+    localStorage.setItem(CHART_CURRENCY_KEY, c);
+  };
+
+  const { data, isLoading } = api.securities.getEtfPriceChart.useQuery(
+    { isin, period, currency },
+    { staleTime: 4 * 60 * 60 * 1000, retry: 1 },
+  );
+
+  const chartData = useMemo(() => {
+    if (!data?.series) return [];
+    // For large datasets, reduce points for smooth rendering
+    const series = data.series;
+    if (series.length <= 365) return series;
+    const step = Math.ceil(series.length / 365);
+    const reduced = series.filter((_, i) => i % step === 0);
+    // Always include the last point
+    if (reduced[reduced.length - 1] !== series[series.length - 1]) {
+      reduced.push(series[series.length - 1]!);
+    }
+    return reduced;
+  }, [data?.series]);
+
+  const { minPrice, maxPrice, isPositive } = useMemo(() => {
+    if (chartData.length === 0) return { minPrice: 0, maxPrice: 0, isPositive: true };
+    const prices = chartData.map((d) => d.price);
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
+    const first = chartData[0]!.price;
+    const last = chartData[chartData.length - 1]!.price;
+    return { minPrice: min, maxPrice: max, isPositive: last >= first };
+  }, [chartData]);
+
+  const accentColor = isPositive ? "#34d399" : "#f87171";
+  const gradientId = isPositive ? "priceGradientUp" : "priceGradientDown";
+
+  const formatXTick = (dateStr: string) => {
+    const d = new Date(dateStr);
+    if (period === "1M" || period === "3M") {
+      return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    }
+    if (period === "6M" || period === "1Y") {
+      return d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
+    }
+    return d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+  };
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-white/5 bg-gray-900/60 backdrop-blur-sm">
+      <div className="flex items-center justify-between border-b border-white/5 px-5 py-3">
+        <div className="flex items-center gap-2">
+          <TrendingUpIcon className="h-5 w-5 text-emerald-400" />
+          <h2 className="text-base font-bold text-white">Price</h2>
+          {data && (
+            <span className="ml-2 text-sm tabular-nums text-gray-400">
+              {data.currency} {data.latestPrice.toFixed(2)}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1">
+            {CHART_CURRENCIES.map((c) => (
+              <button
+                key={c}
+                onClick={() => handleCurrencyChange(c)}
+                className={`rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+                  currency === c
+                    ? "bg-sky-500/20 text-sky-400"
+                    : "text-gray-500 hover:text-gray-300 hover:bg-white/5"
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+          <div className="h-4 w-px bg-white/10" />
+          <div className="flex gap-1">
+            {CHART_PERIODS.map((p) => (
+              <button
+                key={p}
+                onClick={() => setPeriod(p)}
+                className={`rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+                  period === p
+                    ? "bg-emerald-500/20 text-emerald-400"
+                    : "text-gray-500 hover:text-gray-300 hover:bg-white/5"
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="px-2 py-4" style={{ minHeight: 280 }}>
+        {isLoading ? (
+          <div className="flex h-[260px] items-center justify-center">
+            <Loader2Icon className="h-6 w-6 animate-spin text-emerald-500" />
+          </div>
+        ) : chartData.length === 0 ? (
+          <div className="flex h-[260px] items-center justify-center text-sm text-gray-500">
+            No price data available.
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={260}>
+            <AreaChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 0 }}>
+              <defs>
+                <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={accentColor} stopOpacity={0.25} />
+                  <stop offset="95%" stopColor={accentColor} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="rgba(255,255,255,0.04)"
+                vertical={false}
+              />
+              <XAxis
+                dataKey="date"
+                tickFormatter={formatXTick}
+                tick={{ fontSize: 11, fill: "#6b7280" }}
+                axisLine={false}
+                tickLine={false}
+                minTickGap={50}
+              />
+              <YAxis
+                domain={[
+                  Math.floor(minPrice * 0.98),
+                  Math.ceil(maxPrice * 1.02),
+                ]}
+                tick={{ fontSize: 11, fill: "#6b7280" }}
+                axisLine={false}
+                tickLine={false}
+                width={55}
+                tickFormatter={(v: number) => v.toFixed(0)}
+              />
+              <Tooltip
+                content={<ChartTooltipContent currency={data?.currency ?? "EUR"} />}
+                cursor={{ stroke: "rgba(255,255,255,0.1)" }}
+              />
+              <Area
+                type="monotone"
+                dataKey="price"
+                stroke={accentColor}
+                strokeWidth={2}
+                fill={`url(#${gradientId})`}
+                dot={false}
+                activeDot={{ r: 4, fill: accentColor, stroke: "#111827", strokeWidth: 2 }}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
     </div>
   );
 }
@@ -626,6 +865,11 @@ export default function EtfDetailPage() {
           {/* Key figures */}
           <div className="mb-8">
             <KeyFigures data={data} isin={isin} />
+          </div>
+
+          {/* Price chart */}
+          <div className="mb-8">
+            <PriceChartSection isin={isin} />
           </div>
 
           {!hasAnyData && !data.hasHoldingsSection && (
